@@ -26,13 +26,19 @@ const PORT = process.env.PORT || 9999;
 const frontendOrigin = new URL(
     process.env.FRONTEND_URL || "http://localhost:3000"
 ).origin;
+const allowedOrigins = [
+    frontendOrigin,
+    "http://localhost:3000",
+    "https://nexlogvn.tech",
+    "https://www.nexlogvn.tech",
+];
 
 app.use(compression());
 app.use(helmet());
 
 app.use(cors({
     origin: (origin, callback) => {
-        callback(null, origin === frontendOrigin);
+        callback(null, !origin || allowedOrigins.includes(origin));
     },
     credentials: true
 }));
