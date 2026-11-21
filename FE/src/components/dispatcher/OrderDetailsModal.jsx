@@ -1,0 +1,1131 @@
+'use client';
+import { useState, useRef, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Modal, Tabs, Tag, Button, message } from 'antd';
+import { 
+  MessageCircle, 
+  ArrowUpRight
+} from 'lucide-react';
+import CancelOrderModal from './CancelOrderModal';
+import DocumentAssistantDrawer from './DocumentAssistantDrawer';
+import LoadPlan3DModal from './LoadPlan3DModal';
+import SplitOrderModal from './SplitOrderModal';
+import { 
+  SPECIALIZED_CARGO_CATEGORIES, 
+  getRecommendedDocsByCargo,
+  getCoordsFromAddress,
+  calculateAlsPricing,
+  analyzeVehicleRecommendation,
+  getVehicleSpecByKey
+} from '../../data/dispatcherPresets';
+import { orderApi } from '../../api/orderApi';
+
+// Subcomponents đã được tách module
+import OrderOverviewTab from './orderDetails/OrderOverviewTab';
+import OrderDocumentsTab from './orderDetails/OrderDocumentsTab';
+import OrderContractTab from './orderDetails/OrderContractTab';
+import OrderFinancialTab from './orderDetails/OrderFinancialTab';
+import OrderDriverChatTab from './orderDetails/OrderDriverChatTab';
+import { RejectDocModal } from './orderDetails/RejectDocModal';
+
+// Danh mục phụ phí gợi ý phổ biến
+const EXTRA_FEE_TYPES = [
+  'Phí nâng hạ bốc xếp tại kho',
+  'Phí chờ đợi bốc dỡ quá giờ (>60p)',
+  'Phí lưu đêm / lưu ca phương tiện',
+  'Phí cầu đường, phà, vé BOT',
+  'Phí giao hàng ngoài giờ hành chính',
+  'Phí đóng gói chèn lót hàng giá trị cao',
+  'Chi phí phát sinh khác'
+];
+
+export default function OrderDetailsModal({ open, order, onCancel, onUpdateOrder, readOnly = false }) {
+  if (!open || !order) return null;
+
+  return (
+    <OrderDetailsModalContent
+      key={`${order.id || order.order_id}`}
+      open={open}
+      order={order}
+      onCancel={onCancel}
+      onUpdateOrder={onUpdateOrder}
+      readOnly={readOnly}
+    />
+  );
+}
+
+function OrderDetailsModalContent({ open, order, onCancel, onUpdateOrder, readOnly = false }) {
+  const router = useRouter();
+  const isNegotiating = order.status === 'NEGOTIATING' || order.web_workflow?.stage === 'CUSTOMER_NEGOTIATING';
+  const isClosed = order.status === 'CANCELLED' || order.status === 'CLOSED';
+  const isLocked = isClosed || ['READY_FOR_PLANNING', 'ASSIGNED', 'IN_TRANSIT', 'DELIVERED'].includes(order.status);
+
+  // Xác định tab mặc định dựa trên trạng thái đơn hàng
+  const defaultTab = order.targetTab || (
+    (order.status === 'DRAFT' || isNegotiating) ? '1' :
+    order.status === 'CONFIRMED' ? '2' : '1'
+  );
+
+  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [splitModalOpen, setSplitModalOpen] = useState(false);
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [confirmingDocs, setConfirmingDocs] = useState(false);
+  const [scanningCustoms, setScanningCustoms] = useState(false);
+
+  // Scan thông tin từ chứng từ khách upload để fill tự động vào Tờ khai hải quan
+  const handleScanCustomsFromDocs = async () => {
+    try {
+      setScanningCustoms(true);
+      const res = await aiApi.autoScanCustomsDeclaration({
+        order,
+        uploadedDocs: documents.filter(d => d.file !== 'Chờ tải lên')
+      });
+
+      const customsDocKey = documents.find(d => d.key === 'doc-basic-1' || d.key === 'basic-1' || d.name?.toLowerCase().includes('tờ khai hải quan'))?.key || 'doc-basic-1';
+      
+      const updatedDocs = documents.map(d => {
+        if (d.key === customsDocKey || d.name?.toLowerCase().includes('tờ khai hải quan')) {
+          return {
+            ...d,
+            file: res.fileName || `To_khai_hai_quan_${order.order_id || 'NEX'}_VNACCS.pdf`,
+            size: res.fileSize || '245 KB',
+            uploadDate: new Date().toLocaleString('vi-VN'),
+            status: 'APPROVED',
+            customs_data: res
+          };
+        }
+        return d;
+      });
+
+      setDocuments(updatedDocs);
+      await orderApi.uploadOrderDocuments(order.id || order.order_id, updatedDocs);
+
+      onUpdateOrder?.({
+        ...order,
+        documents: updatedDocs,
+        web_workflow: {
+          ...(order.web_workflow || {}),
+          documents: updatedDocs,
+          customs_declaration: res
+        }
+      });
+
+      message.success(`Đã tự động trích xuất thông tin & sinh Tờ khai hải quan điện tử (${res.declarationNumber || 'VNACCS'}) thành công!`);
+    } catch (err) {
+      console.error('handleScanCustomsFromDocs error:', err);
+      message.error(err.message || 'Lỗi khi quét thông tin tờ khai hải quan');
+    } finally {
+      setScanningCustoms(false);
+    }
+  };
+
+  // State Modal Từ chối 1 chứng từ
+  const [rejectDocModalOpen, setRejectDocModalOpen] = useState(false);
+  const [rejectingDocKey, setRejectingDocKey] = useState(null);
+  const [rejectDocReason, setRejectDocReason] = useState('Chứng từ chưa hợp lệ hoặc bị mờ, vui lòng tải lại tệp đúng quy định.');
+  const [submittingRejectDoc, setSubmittingRejectDoc] = useState(false);
+
+  // State Giá thỏa thuận, Phương án xe đề xuất, Lý do điều chỉnh lại giá & Hợp đồng
+  const [currentAgreedPrice, setCurrentAgreedPrice] = useState(order.agreed_price || 0);
+  const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [proposedVehicleType, setProposedVehicleType] = useState(
+    order.proposed_vehicle_type ||
+    order.web_workflow?.proposed_vehicle_type ||
+    order.vehicle_type_required ||
+    'TRUCK_2.5T'
+  );
+  const [vehicleAnalysisNote, setVehicleAnalysisNote] = useState(
+    order.vehicle_analysis_note ||
+    order.web_workflow?.vehicle_analysis_note ||
+    ''
+  );
+  const [contractUploaded, setContractUploaded] = useState(order.contract_uploaded || false);
+  const [contractFile, setContractFile] = useState(order.contract_file || null);
+  const [contractFileData, setContractFileData] = useState(order.contract_file_data || null);
+  const [contractUploadedAt, setContractUploadedAt] = useState(order.contract_uploaded_at || null);
+  const [uploadingContract, setUploadingContract] = useState(false);
+
+  // State Modal mô phỏng xếp xe 3D
+  const [is3DModalOpen, setIs3DModalOpen] = useState(false);
+  const [selected3DVehicleType, setSelected3DVehicleType] = useState(null);
+
+  // State Tuyến đường & Ước tính
+  const [routeInfo, setRouteInfo] = useState({
+    distanceKm: order.estimated_distance_km || 35.5,
+    durationMins: order.estimated_duration_mins || 45
+  });
+
+  // State Chứng từ vận tải
+  const [documents, setDocuments] = useState(() => {
+    if (Array.isArray(order.documents) && order.documents.length > 0) {
+      return order.documents;
+    }
+    return getRecommendedDocsByCargo(
+      order.cargo_name || order.cargo_type || '',
+      order.cargo_type || '',
+      order.order_notes || ''
+    );
+  });
+
+  // Đồng bộ danh sách chứng từ khi khách hàng tải lại tệp từ trang Web
+  useEffect(() => {
+    if (Array.isArray(order.documents) && order.documents.length > 0) {
+      setDocuments(order.documents);
+    }
+  }, [order.documents, order.web_workflow?.docs_uploaded_at]);
+
+  const [newDocName, setNewDocName] = useState('');
+  const [selectedSpecializedDoc, setSelectedSpecializedDoc] = useState('');
+  const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
+  const [uploadingDocKey, setUploadingDocKey] = useState(null);
+  const fileInputRef = useRef(null);
+  const contractInputRef = useRef(null);
+
+  // State Phụ phí phát sinh
+  const [extraFees, setExtraFees] = useState(order.extra_fees_list || []);
+  const [newFeeType, setNewFeeType] = useState(EXTRA_FEE_TYPES[0]);
+  const [newFeeAmount, setNewFeeAmount] = useState(0);
+  const [newFeeReason, setNewFeeReason] = useState('');
+
+  // State Chat nội bộ
+  const [orderMessages, setOrderMessages] = useState(() => {
+    if (order.notes && order.notes.length > 0) {
+      return order.notes.map((n, i) => ({
+        id: n.id || i,
+        sender: 'Hệ thống / Ghi chú',
+        role: 'SYSTEM',
+        time: n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Vừa xong',
+        content: n.content
+      }));
+    }
+    if (order.order_notes) {
+      return [{
+        id: 1,
+        sender: 'Thông tin tiếp nhận',
+        role: 'SYSTEM',
+        time: 'Vừa xong',
+        content: order.order_notes
+      }];
+    }
+    return [];
+  });
+  const [newMessageText, setNewMessageText] = useState('');
+
+  // Phân tích gợi ý chọn xe
+  const vehicleRecommendation = useMemo(() => {
+    return analyzeVehicleRecommendation({
+      actualWeightKg: parseFloat(order.weight || order.weight_kg || 0),
+      chargeableWeightKg: parseFloat(order.chargeable || order.chargeable_weight || order.weight || 0),
+      length_cm: parseFloat(order.length_cm || 0),
+      width_cm: parseFloat(order.width_cm || 0),
+      height_cm: parseFloat(order.height_cm || 0),
+      package_count: parseInt(order.package_count, 10) || 1,
+      items: order.items || [],
+      customerRequestedVehicle:
+        order.customer_requested_vehicle ||
+        order.vehicle_type_required ||
+        'TRUCK_2.5T'
+    });
+  }, [order]);
+
+  // Tính giá cước sàn gợi ý
+  const pricingBreakdown = useMemo(() => {
+    const dist = parseFloat(routeInfo.distanceKm) || 35.5;
+    const weight = parseFloat(order.chargeable || order.chargeable_weight || order.weight || 1000);
+    const vehicleType = proposedVehicleType || order.vehicle_type_required || order.vehicle_type || 'TRUCK_2.5T';
+    const timeSlot = order.operating_time_slot || 'FULL_DAY';
+    const isUnloading = order.loading_unloading_required === true;
+    const isCustoms = order.customs_service_required === true;
+
+    const alsPricing = calculateAlsPricing({
+      distanceKm: dist,
+      chargeableWeightKg: weight,
+      vehicleType,
+      timeSlot,
+      pickupAddress: order.pickup || order.pickup_address || '',
+      deliveryAddress: order.dropoff || order.delivery_address || '',
+      loadingUnloadingRequired: isUnloading,
+      customsServiceRequired: isCustoms
+    });
+
+    return {
+      dist,
+      weight,
+      vehicleType,
+      timeSlot,
+      isFixedRoute: alsPricing.isFixedRoute,
+      routeName: alsPricing.routeName,
+      baseFare: alsPricing.baseTransportFee,
+      loadingFee: alsPricing.loadingFee,
+      customsFee: alsPricing.customsFee,
+      totalRaw: alsPricing.totalRate,
+      totalRounded: alsPricing.totalRate
+    };
+  }, [routeInfo, order, proposedVehicleType]);
+
+  const estimatedBaselineRate = pricingBreakdown.totalRounded;
+
+  // Tổng các khoản phụ phí phát sinh
+  const totalExtraFees = useMemo(() => {
+    return extraFees.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  }, [extraFees]);
+
+  // Chuẩn hóa địa chỉ điểm lấy và điểm giao
+  const pickupAddress = useMemo(() => {
+    return order.pickup || order.pickup_address || order.pickup_location?.address || 'Kho ALS Cảng HKQT Nội Bài';
+  }, [order]);
+
+  const deliveryAddress = useMemo(() => {
+    return order.dropoff || order.delivery_address || order.delivery_location?.address || 'KCN Tiên Sơn, Bắc Ninh';
+  }, [order]);
+
+  // Tọa độ
+  const pickupCoords = useMemo(() => {
+    if (order.pickup_coords?.lat && order.pickup_coords?.lng) return order.pickup_coords;
+    if (order.pickup_location?.lat && order.pickup_location?.lng) {
+      return { lat: parseFloat(order.pickup_location.lat), lng: parseFloat(order.pickup_location.lng) };
+    }
+    return getCoordsFromAddress(pickupAddress, 'A');
+  }, [order, pickupAddress]);
+
+  const deliveryCoords = useMemo(() => {
+    if (order.dropoff_coords?.lat && order.dropoff_coords?.lng) return order.dropoff_coords;
+    if (order.delivery_coords?.lat && order.delivery_coords?.lng) return order.delivery_coords;
+    if (order.delivery_location?.lat && order.delivery_location?.lng) {
+      return { lat: parseFloat(order.delivery_location.lat), lng: parseFloat(order.delivery_location.lng) };
+    }
+    return getCoordsFromAddress(deliveryAddress, 'B');
+  }, [order, deliveryAddress]);
+
+  // 1. Chốt giá cước thỏa thuận
+  const handleConfirmPriceAndOrder = async () => {
+    if (!currentAgreedPrice || currentAgreedPrice <= 0) {
+      message.error('Vui lòng nhập giá cước thỏa thuận đã chốt với khách hàng (> 0 VNĐ)!');
+      return;
+    }
+
+    if (isNegotiating && !adjustmentReason.trim()) {
+      message.error('Vui lòng ghi rõ lý do điều chỉnh lại giá cước (Bắt buộc)!');
+      return;
+    }
+
+    try {
+      setSavingPrice(true);
+      await orderApi.uploadOrderDocuments(order.id || order.order_id, documents).catch(console.error);
+
+      const res = await orderApi.updateAgreedPrice(
+        order.id || order.order_id,
+        currentAgreedPrice,
+        adjustmentReason.trim(),
+        {
+          proposed_vehicle_type: proposedVehicleType,
+          vehicle_analysis_note: vehicleAnalysisNote.trim()
+        }
+      );
+      
+      const isWebOrder = order.source === 'HOMEPAGE' || Boolean(order.customer_email);
+      const selectedSpec = getVehicleSpecByKey(proposedVehicleType);
+      const updatedOrder = {
+        ...order,
+        status: isWebOrder ? 'DRAFT' : 'CONFIRMED',
+        agreed_price: currentAgreedPrice,
+        vehicle_type_required: proposedVehicleType,
+        proposed_vehicle_type: proposedVehicleType,
+        vehicle_analysis_note: vehicleAnalysisNote.trim(),
+        documents: documents,
+        web_workflow: res?.web_workflow || {
+          ...(order.web_workflow || {}),
+          stage: 'PRICE_AGREED_BY_DISPATCHER',
+          agreed_price: currentAgreedPrice,
+          proposed_vehicle_type: proposedVehicleType,
+          vehicle_analysis_note: vehicleAnalysisNote.trim(),
+          adjustment_reason: adjustmentReason.trim() || order.web_workflow?.adjustment_reason
+        }
+      };
+
+      onUpdateOrder?.(updatedOrder);
+      if (isNegotiating) {
+        message.success(`Đã chốt lại phương án ${selectedSpec.label} & giá ${currentAgreedPrice.toLocaleString('vi-VN')} đ (Lý do: ${adjustmentReason.trim()}) và gửi lại cho khách hàng!`);
+        setAdjustmentReason('');
+      } else if (isWebOrder) {
+        message.success(`Đã chốt phương án ${selectedSpec.label} & giá ${currentAgreedPrice.toLocaleString('vi-VN')} đ, đồng thời gửi email báo giá và yêu cầu chứng từ cho khách hàng!`);
+      } else {
+        message.success(`Đã chốt phương án ${selectedSpec.label} & giá ${currentAgreedPrice.toLocaleString('vi-VN')} đ! Đơn đã chuyển sang trạng thái Cần xác nhận chứng từ.`);
+        setActiveTab('2');
+      }
+    } catch (err) {
+      console.error(err);
+      message.error(err.message || 'Lỗi khi cập nhật giá cước lên máy chủ');
+    } finally {
+      setSavingPrice(false);
+    }
+  };
+
+  // 2. Xử lý Tải lên chứng từ
+  const triggerUploadDoc = (docKey) => {
+    setUploadingDocKey(docKey);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadingDocKey) return;
+
+    const sizeFormatted = file.size > 1024 * 1024 
+      ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` 
+      : `${Math.round(file.size / 1024)} KB`;
+
+    const nowFormatted = new Date().toLocaleDateString('vi-VN');
+
+    const reader = new FileReader();
+    reader.onload = async (uploadEvent) => {
+      const base64Data = uploadEvent.target?.result;
+
+      const updatedDocs = documents.map(d => {
+        if (d.key === uploadingDocKey) {
+          return {
+            ...d,
+            file: file.name,
+            file_data: base64Data,
+            size: sizeFormatted,
+            uploadDate: nowFormatted,
+            status: 'PENDING_REVIEW',
+            reject_reason: null
+          };
+        }
+        return d;
+      });
+
+      setDocuments(updatedDocs);
+      setUploadingDocKey(null);
+
+      try {
+        await orderApi.uploadOrderDocuments(order.id || order.order_id, updatedDocs);
+        onUpdateOrder?.({
+          ...order,
+          documents: updatedDocs,
+          web_workflow: {
+            ...(order.web_workflow || {}),
+            documents: updatedDocs
+          }
+        });
+        message.success(`Đã tải lên và lưu tệp chứng từ: ${file.name}`);
+      } catch (err) {
+        console.error('Lỗi lưu chứng từ:', err);
+        message.warning(`Đã đính kèm tệp ${file.name} nhưng chưa lưu được vào máy chủ.`);
+      }
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  // 2b. Xử lý Tải lên tệp hợp đồng
+  const handleContractFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const sizeFormatted = file.size > 1024 * 1024 
+      ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` 
+      : `${Math.round(file.size / 1024)} KB`;
+
+    try {
+      setUploadingContract(true);
+      const reader = new FileReader();
+      reader.onload = async (uploadEvent) => {
+        const base64Data = uploadEvent.target?.result;
+
+        try {
+          const res = await orderApi.uploadContractFile(order.id || order.order_id, {
+            file_name: file.name,
+            file_data: base64Data,
+            file_size: sizeFormatted
+          });
+
+          setContractUploaded(true);
+          setContractFile(file.name);
+          setContractFileData(base64Data);
+          setContractUploadedAt(res.contract_uploaded_at || new Date().toISOString());
+
+          const nextStatus = res?.order?.status || (isDocsApprovedStage ? 'READY_FOR_PLANNING' : order.status);
+          const updatedOrder = {
+            ...order,
+            status: nextStatus,
+            contract_uploaded: true,
+            contract_file: file.name,
+            contract_file_data: base64Data,
+            contract_uploaded_at: res.contract_uploaded_at || new Date().toISOString(),
+            web_workflow: res?.web_workflow || {
+              ...(order.web_workflow || {}),
+              stage: 'CONTRACT_SIGNED',
+              signed_contract: {
+                signed_at: res.contract_uploaded_at || new Date().toISOString(),
+                signer_name: 'Hai bên ký trực tiếp (Bản Scan PDF)',
+                contract_file: file.name
+              }
+            }
+          };
+
+          onUpdateOrder?.(updatedOrder);
+          message.success(
+            res?.message ||
+              `Đã đính kèm bản scan hợp đồng [${file.name}] vào hồ sơ đơn hàng thành công!`
+          );
+        } catch (apiErr) {
+          console.error('Upload contract api error:', apiErr);
+          message.error(apiErr.message || 'Lỗi khi lưu tệp hợp đồng lên máy chủ');
+        } finally {
+          setUploadingContract(false);
+        }
+      };
+
+      reader.onerror = () => {
+        message.error('Không thể đọc dữ liệu tệp hợp đồng');
+        setUploadingContract(false);
+      };
+
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Upload error:', err);
+      message.error('Lỗi khi tải tệp');
+      setUploadingContract(false);
+    }
+  };
+
+  // 3. Duyệt và Từ chối từng chứng từ
+  const handleApproveDoc = async (docKey) => {
+    const updated = documents.map(d => d.key === docKey ? { ...d, status: 'APPROVED', reject_reason: null } : d);
+    setDocuments(updated);
+
+    const nonCustomsDocs = updated.filter(
+      d => !(d.preparedBy === 'DISPATCHER' || d.key === 'doc-basic-1' || d.name?.toLowerCase().includes('tờ khai hải quan'))
+    );
+    const stillHasRejected = updated.some(d => d.status === 'REJECTED');
+    const allApproved = nonCustomsDocs.length > 0 && nonCustomsDocs.every(d => d.status === 'APPROVED');
+    const nextStage = stillHasRejected ? 'DOCS_REJECTED' : allApproved ? 'DOCS_APPROVED' : 'DOCS_UPLOADED';
+
+    try {
+      const res = await orderApi.uploadOrderDocuments(order.id || order.order_id, updated, nextStage);
+      onUpdateOrder?.({
+        ...order,
+        status: allApproved && (order.contract_uploaded || res?.order?.status === 'READY_FOR_PLANNING') ? 'READY_FOR_PLANNING' : 'CONFIRMED',
+        documents: updated,
+        web_workflow: res?.web_workflow || {
+          ...(order.web_workflow || {}),
+          stage: nextStage,
+          documents: updated,
+          approved_documents: allApproved ? updated.filter(d => d.status === 'APPROVED') : (order.web_workflow?.approved_documents || null)
+        }
+      });
+      message.success(allApproved ? 'Đã duyệt toàn bộ chứng từ thành công!' : 'Đã duyệt tính hợp lệ của chứng từ!');
+    } catch (e) {
+      console.error('handleApproveDoc error:', e);
+      onUpdateOrder?.({
+        ...order,
+        status: 'CONFIRMED',
+        documents: updated,
+        web_workflow: {
+          ...(order.web_workflow || {}),
+          stage: nextStage,
+          documents: updated
+        }
+      });
+      message.success('Đã duyệt tính hợp lệ của chứng từ!');
+    }
+  };
+
+  const handleRejectDoc = (docKey) => {
+    setRejectingDocKey(docKey);
+    setRejectDocReason('Chứng từ bị mờ hoặc thông tin chưa khớp, vui lòng tải lại tệp đúng quy định.');
+    setRejectDocModalOpen(true);
+  };
+
+  const handleConfirmRejectDoc = async () => {
+    if (!rejectingDocKey) return;
+    if (!rejectDocReason.trim()) {
+      message.error('Vui lòng nhập lý do từ chối chứng từ để thông báo cho khách hàng!');
+      return;
+    }
+
+    try {
+      setSubmittingRejectDoc(true);
+      const updated = documents.map(d =>
+        d.key === rejectingDocKey
+          ? { ...d, status: 'REJECTED', reject_reason: rejectDocReason.trim() }
+          : d
+      );
+      setDocuments(updated);
+
+      const res = await orderApi.rejectOrderDocument(order.id || order.order_id, {
+        doc_key: rejectingDocKey,
+        reject_reason: rejectDocReason.trim(),
+        documents: updated
+      });
+
+      onUpdateOrder?.({
+        ...order,
+        documents: res?.documents || updated,
+        web_workflow: res?.web_workflow || {
+          ...(order.web_workflow || {}),
+          stage: 'DOCS_REJECTED',
+          documents: updated
+        }
+      });
+
+      setRejectDocModalOpen(false);
+      setRejectingDocKey(null);
+      message.warning(res?.message || 'Đã từ chối chứng từ và gửi email yêu cầu khách hàng tải lại tệp mới!');
+    } catch (err) {
+      console.error('rejectOrderDocument error:', err);
+      message.error(err.message || 'Lỗi khi từ chối chứng từ');
+    } finally {
+      setSubmittingRejectDoc(false);
+    }
+  };
+
+  // 4. Bổ sung chứng từ tùy biến
+  const handleAddCustomDoc = (docTitle) => {
+    const title = (typeof docTitle === 'string' && docTitle.trim()) 
+      ? docTitle.trim() 
+      : (selectedSpecializedDoc || newDocName).trim();
+
+    if (!title) {
+      message.error('Vui lòng chọn hoặc nhập tên loại chứng từ cần bổ sung!');
+      return;
+    }
+
+    if (documents.some(d => d.name.toLowerCase() === title.toLowerCase())) {
+      message.warning(`Chứng từ "${title}" đã có trong danh mục!`);
+      return;
+    }
+
+    let docDesc = 'Chứng từ hồ sơ đối chiếu bổ sung theo yêu cầu';
+    let catName = 'Chứng từ bổ sung';
+    for (const cat of SPECIALIZED_CARGO_CATEGORIES) {
+      const match = cat.specializedDocs.find(d => d.name === title);
+      if (match) {
+        docDesc = match.description;
+        catName = cat.categoryName;
+        break;
+      }
+    }
+
+    const newKey = `custom-doc-${Date.now()}`;
+    const newDoc = {
+      key: newKey,
+      name: title,
+      description: docDesc,
+      file: 'Chờ tải lên',
+      status: 'WAITING_UPLOAD',
+      size: '-',
+      uploadDate: '-',
+      isBasic: false,
+      isCustom: true,
+      categoryName: catName
+    };
+
+    const updated = [...documents, newDoc];
+    setDocuments(updated);
+    setNewDocName('');
+    setSelectedSpecializedDoc('');
+    orderApi.uploadOrderDocuments(order.id || order.order_id, updated).catch(() => {});
+    message.success(`Đã thêm mục chứng từ mới: "${newDoc.name}"`);
+  };
+
+  const handleApplyAssistantRecommendations = (recommendedList) => {
+    const updated = recommendedList.map(rec => {
+      const exist = documents.find(p => p.name === rec.name);
+      if (exist && exist.file !== 'Chờ tải lên') {
+        return { 
+          ...rec, 
+          file: exist.file, 
+          size: exist.size, 
+          uploadDate: exist.uploadDate, 
+          status: exist.status 
+        };
+      }
+      return rec;
+    });
+    setDocuments(updated);
+    orderApi.uploadOrderDocuments(order.id || order.order_id, updated).catch(() => {});
+    message.success('Đã cập nhật danh mục chứng từ từ Trợ lý AI!');
+  };
+
+  const handleDeleteCustomDoc = (docKey) => {
+    const updated = documents.filter(d => d.key !== docKey);
+    setDocuments(updated);
+    orderApi.uploadOrderDocuments(order.id || order.order_id, updated).catch(() => {});
+    message.info('Đã xóa mục chứng từ.');
+  };
+
+  // 5. Xác nhận toàn bộ chứng từ
+  const handleConfirmAllDocuments = async () => {
+    const rejectedList = documents.filter(d => d.status === 'REJECTED');
+    if (rejectedList.length > 0) {
+      message.error(`Không thể duyệt toàn bộ hồ sơ vì đang có ${rejectedList.length} chứng từ bị TỪ CHỐI (${rejectedList.map(d => d.name).join(', ')}). Vui lòng chờ khách hàng tải lại tệp hợp lệ!`);
+      return;
+    }
+
+    const unuploaded = documents.filter(d => d.file === 'Chờ tải lên' || d.status === 'WAITING_UPLOAD');
+    if (unuploaded.length > 0) {
+      // Bỏ bắt buộc Tờ khai hải quan phải nộp trước (vì tờ khai sẽ được tự sinh bằng AI sau khi khách ký hợp đồng)
+      const nonCustomsUnuploaded = unuploaded.filter(d => !(d.preparedBy === 'DISPATCHER' || d.key === 'doc-basic-1' || d.name?.toLowerCase().includes('tờ khai hải quan')));
+      if (nonCustomsUnuploaded.length > 0) {
+        message.warning(`Còn ${nonCustomsUnuploaded.length} chứng từ của khách chưa được tải tệp lên! Hãy tải đầy đủ trước khi xác nhận.`);
+        return;
+      }
+    }
+
+    const isWebOrder = order.source === 'HOMEPAGE';
+
+    try {
+      setConfirmingDocs(true);
+      const approvedDocs = documents.map(d => ({ ...d, status: 'APPROVED', reject_reason: null }));
+      setDocuments(approvedDocs);
+
+      if (isWebOrder) {
+        const res = await orderApi.approveWebOrderDocuments(order.id || order.order_id, approvedDocs);
+        
+        const updatedOrder = {
+          ...order,
+          status: 'READY_FOR_PLANNING',
+          documents: approvedDocs,
+          web_workflow: res?.web_workflow || {
+            ...(order.web_workflow || {}),
+            stage: 'DOCS_APPROVED',
+            documents: approvedDocs,
+            approved_documents: approvedDocs
+          }
+        };
+
+        onUpdateOrder?.(updatedOrder);
+        message.success(
+          res?.message || 'Đã duyệt toàn bộ hồ sơ chứng từ! Đơn hàng đã sẵn sàng để xếp xe.'
+        );
+      } else {
+        await orderApi.confirmOrder(order.id || order.order_id, currentAgreedPrice);
+        const updatedOrder = {
+          ...order,
+          status: 'READY_FOR_PLANNING',
+          documents: approvedDocs
+        };
+        onUpdateOrder?.(updatedOrder);
+        message.success('Đã xác nhận toàn bộ chứng từ! Đơn hàng đã sẵn sàng để xếp xe.');
+      }
+    } catch (err) {
+      console.error(err);
+      message.error(err.message || 'Lỗi khi xác nhận chứng từ trên máy chủ');
+    } finally {
+      setConfirmingDocs(false);
+    }
+  };
+
+  // 6. Thêm phụ phí phát sinh
+  const handleAddExtraFee = () => {
+    if (!newFeeAmount || newFeeAmount <= 0) {
+      message.error('Vui lòng nhập số tiền phụ phí hợp lệ (> 0)!');
+      return;
+    }
+
+    const newFee = {
+      id: Date.now(),
+      type: newFeeType,
+      amount: newFeeAmount,
+      reason: newFeeReason || 'Phát sinh trong quá trình vận hành',
+      time: new Date().toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    };
+
+    const updatedList = [...extraFees, newFee];
+    setExtraFees(updatedList);
+    setNewFeeAmount(0);
+    setNewFeeReason('');
+
+    onUpdateOrder?.({
+      ...order,
+      extra_fees_list: updatedList,
+      extra_fees_surcharge: updatedList.reduce((s, f) => s + f.amount, 0)
+    });
+    message.success(`Đã thêm phụ phí: ${newFeeType} (${newFee.amount.toLocaleString()} đ)`);
+  };
+
+  // 7. Xử lý Hủy đơn hàng
+  const handleExecuteCancel = async (cancelData) => {
+    try {
+      await orderApi.cancelOrder(order.id || order.order_id, cancelData);
+    } catch (err) {
+      console.warn('cancelOrder API note:', err);
+    }
+    onUpdateOrder?.({
+      ...order,
+      status: 'CANCELLED',
+      cancellation_reason: cancelData.cancellation_reason,
+      cancellation_fee: cancelData.cancellation_fee,
+      cancelled_at: cancelData.cancelled_at
+    });
+    setCancelModalOpen(false);
+  };
+
+  // 8. Gửi tin nhắn trao đổi nội bộ
+  const handleSendMessage = () => {
+    if (!newMessageText.trim()) return;
+    setOrderMessages(prev => [...prev, {
+      id: Date.now(),
+      sender: 'Điều phối viên (Bạn)',
+      role: 'DISPATCHER',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      content: newMessageText.trim()
+    }]);
+    setNewMessageText('');
+    message.success('Đã gửi tin nhắn cho tài xế!');
+  };
+
+  const isWebOrder = order.source === 'HOMEPAGE';
+  const hasRejectedDocs = documents.some(d => d.status === 'REJECTED');
+  const isDocsApprovedStage =
+    !hasRejectedDocs &&
+    (order.web_workflow?.stage === 'DOCS_APPROVED' || order.web_workflow?.stage === 'CONTRACT_SIGNED');
+
+  // Cấu hình Tabs
+  const tabItems = [
+    {
+      key: '1',
+      label: <span className="font-semibold text-xs">Tổng quan &amp; Hàng hóa</span>,
+      children: (
+        <OrderOverviewTab
+          order={order}
+          routeInfo={routeInfo}
+          setRouteInfo={setRouteInfo}
+          pickupAddress={pickupAddress}
+          deliveryAddress={deliveryAddress}
+          pickupCoords={pickupCoords}
+          deliveryCoords={deliveryCoords}
+          pricingBreakdown={pricingBreakdown}
+          estimatedBaselineRate={estimatedBaselineRate}
+          currentAgreedPrice={currentAgreedPrice}
+          setCurrentAgreedPrice={setCurrentAgreedPrice}
+          adjustmentReason={adjustmentReason}
+          setAdjustmentReason={setAdjustmentReason}
+          proposedVehicleType={proposedVehicleType}
+          setProposedVehicleType={setProposedVehicleType}
+          vehicleAnalysisNote={vehicleAnalysisNote}
+          setVehicleAnalysisNote={setVehicleAnalysisNote}
+          vehicleRecommendation={vehicleRecommendation}
+          savingPrice={savingPrice}
+          handleConfirmPriceAndOrder={handleConfirmPriceAndOrder}
+          documents={documents}
+          setDocuments={setDocuments}
+          onOpenAssistant={() => setAssistantDrawerOpen(true)}
+          onOpen3DModal={(vType) => {
+            setSelected3DVehicleType(vType || proposedVehicleType);
+            setIs3DModalOpen(true);
+          }}
+          onOpenSplitModal={(!isLocked && !isClosed && (order.status === 'DRAFT' || isNegotiating)) ? () => setSplitModalOpen(true) : null}
+        />
+      )
+    }
+  ];
+
+  if (order.status !== 'DRAFT' && !isNegotiating) {
+    tabItems.push({
+      key: '2',
+      label: <span className="font-semibold text-xs">Kiểm duyệt Chứng từ</span>,
+      children: (
+        <OrderDocumentsTab
+          order={order}
+          isWebOrder={isWebOrder}
+          documents={documents}
+          setDocuments={setDocuments}
+          selectedSpecializedDoc={selectedSpecializedDoc}
+          setSelectedSpecializedDoc={setSelectedSpecializedDoc}
+          newDocName={newDocName}
+          setNewDocName={setNewDocName}
+          setAssistantDrawerOpen={setAssistantDrawerOpen}
+          handleAddCustomDoc={handleAddCustomDoc}
+          handleDeleteCustomDoc={handleDeleteCustomDoc}
+          handleApproveDoc={handleApproveDoc}
+          handleRejectDoc={handleRejectDoc}
+          triggerUploadDoc={triggerUploadDoc}
+          handleConfirmAllDocuments={handleConfirmAllDocuments}
+          confirmingDocs={confirmingDocs}
+          handleScanCustomsFromDocs={handleScanCustomsFromDocs}
+          scanningCustoms={scanningCustoms}
+        />
+      )
+    });
+
+    tabItems.push({
+      key: '3',
+      label: <span className="font-semibold text-xs flex items-center gap-1">
+        <span>Hợp đồng vận tải</span>
+        {order.contract_hardcopy_received && <Tag color="green" className="m-0 text-[9px] px-1 py-0">Bản cứng</Tag>}
+      </span>,
+      children: (
+        <OrderContractTab
+          order={order}
+          currentAgreedPrice={currentAgreedPrice}
+          proposedVehicleType={proposedVehicleType}
+          currentProposedSpec={getVehicleSpecByKey(proposedVehicleType)}
+          onUpdateOrder={onUpdateOrder}
+        />
+      )
+    });
+
+    tabItems.push({
+      key: '4',
+      label: <span className="font-semibold text-xs">Tài chính &amp; Phụ phí</span>,
+      children: (
+        <OrderFinancialTab
+          order={order}
+          currentAgreedPrice={currentAgreedPrice}
+          totalExtraFees={totalExtraFees}
+          extraFees={extraFees}
+          setExtraFees={setExtraFees}
+          newFeeType={newFeeType}
+          setNewFeeType={setNewFeeType}
+          newFeeAmount={newFeeAmount}
+          setNewFeeAmount={setNewFeeAmount}
+          newFeeReason={newFeeReason}
+          setNewFeeReason={setNewFeeReason}
+          extraFeeTypes={EXTRA_FEE_TYPES}
+          handleAddExtraFee={handleAddExtraFee}
+        />
+      )
+    });
+
+    if (['IN_TRANSIT', 'ASSIGNED'].includes(order.status)) {
+      tabItems.push({
+        key: '5',
+        label: (
+          <span className="font-semibold text-xs flex items-center gap-1">
+            <MessageCircle size={13} /> Trao đổi với tài xế (Đang chạy)
+          </span>
+        ),
+        children: (
+          <OrderDriverChatTab
+            orderMessages={orderMessages}
+            newMessageText={newMessageText}
+            setNewMessageText={setNewMessageText}
+            handleSendMessage={handleSendMessage}
+          />
+        )
+      });
+    }
+  }
+
+  const rejectingDocObj = documents.find(d => d.key === rejectingDocKey);
+
+  return (
+    <>
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleFileChange} 
+        className="hidden" 
+        accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx"
+      />
+
+      <input 
+        type="file" 
+        ref={contractInputRef} 
+        onChange={handleContractFileChange} 
+        className="hidden" 
+        accept=".pdf"
+      />
+
+      <Modal
+        title={
+          <div className="flex items-center justify-between pb-3 border-b border-gray-100 pr-8">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-50 text-[#7367f0] rounded-xl font-bold font-mono">
+                {order.order_id}
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-800">Hồ sơ Chi tiết Đơn hàng</h3>
+                <p className="text-[11px] text-gray-400 m-0">Khách hàng: <b>{order.customer}</b></p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {order.source === 'HOMEPAGE' ? (
+                <Tag color="orange" className="font-semibold text-xs rounded-full px-3 py-0.5">
+                  Nguồn: Website
+                </Tag>
+              ) : (
+                <Tag color="blue" className="font-semibold text-xs rounded-full px-3 py-0.5">
+                  Nguồn: Hotline / Trực tiếp
+                </Tag>
+              )}
+              <Tag color={
+                isNegotiating ? 'warning' :
+                order.status === 'DELIVERED' ? 'green' : 
+                order.status === 'CANCELLED' ? 'red' : 
+                order.status === 'READY_FOR_PLANNING' ? 'cyan' : 
+                hasRejectedDocs || order.web_workflow?.stage === 'DOCS_REJECTED' ? 'error' :
+                isDocsApprovedStage ? 'success' :
+                order.status === 'CONFIRMED' ? 'blue' : 'default'
+              } className="px-3 py-1 font-semibold text-xs rounded-full">
+                {isNegotiating ? 'ĐANG THƯƠNG LƯỢNG' :
+                 order.status === 'DRAFT' ? 'ĐƠN NHÁP' : 
+                 order.status === 'READY_FOR_PLANNING' ? 'SẴN SÀNG XẾP XE' :
+                 hasRejectedDocs || order.web_workflow?.stage === 'DOCS_REJECTED' ? 'CHỜ KHÁCH UPLOAD LẠI CHỨNG TỪ' :
+                 isDocsApprovedStage ? 'ĐÃ DUYỆT CHỨNG TỪ - CHỜ ĐÍNH KÈM HỢP ĐỒNG PDF' :
+                 order.status === 'CONFIRMED' ? 'CẦN XÁC NHẬN CHỨNG TỪ' : order.status}
+              </Tag>
+            </div>
+          </div>
+        }
+        open={open}
+        onCancel={onCancel}
+        width={980}
+        footer={
+          (isClosed || readOnly) ? [
+            <Button key="close" type="primary" onClick={onCancel}>Đóng</Button>
+          ] : [
+          <Button key="close" onClick={onCancel}>Đóng</Button>,
+          (order.status === 'DRAFT' || isNegotiating) && (
+            <Button 
+              key="confirmPrice" 
+              type="primary" 
+              loading={savingPrice}
+              className={
+                isNegotiating
+                  ? 'bg-amber-600 hover:bg-amber-700 border-amber-600 font-bold'
+                  : 'bg-indigo-600 hover:bg-indigo-700 font-semibold'
+              }
+              onClick={handleConfirmPriceAndOrder}
+            >
+              {isNegotiating ? 'Chốt lại giá' : 'Chốt giá & Xác nhận đơn'}
+            </Button>
+          ),
+          order.status === 'CONFIRMED' && !isNegotiating && !isDocsApprovedStage && (
+            <Button 
+              key="confirmDocs" 
+              type="primary" 
+              loading={confirmingDocs}
+              disabled={hasRejectedDocs}
+              className={
+                hasRejectedDocs
+                  ? 'font-semibold'
+                  : 'bg-emerald-600 hover:bg-emerald-700 font-semibold'
+              }
+              onClick={handleConfirmAllDocuments}
+            >
+              {hasRejectedDocs
+                ? 'Chờ khách tải lại chứng từ bị từ chối'
+                : order.source === 'HOMEPAGE' 
+                  ? 'Duyệt chứng từ & Chuyển sang đính kèm Hợp đồng PDF' 
+                  : 'Xác nhận chứng từ & Chuyển sang Hợp đồng PDF'}
+            </Button>
+          ),
+          order.status === 'CONFIRMED' && !isNegotiating && isDocsApprovedStage && !contractUploaded && (
+            <Button
+              key="uploadScannedContract"
+              type="primary"
+              loading={uploadingContract}
+              className="bg-indigo-600 hover:bg-indigo-700 font-semibold"
+              onClick={() => {
+                setActiveTab('3');
+                if (contractInputRef.current) {
+                  contractInputRef.current.value = '';
+                  contractInputRef.current.click();
+                }
+              }}
+            >
+              Đính kèm hợp đồng đã scan (PDF)
+            </Button>
+          ),
+          order.status === 'READY_FOR_PLANNING' && (
+            <Button 
+              key="planTrip" 
+              type="primary" 
+              icon={<ArrowUpRight size={14} />} 
+              className="bg-[#7367f0] hover:bg-[#5e50ee] font-semibold"
+              onClick={() => {
+                onCancel();
+                router.push('/dispatcher/trips');
+              }}
+            >
+              Chuyển sang Xếp chuyến &amp; Điều xe
+            </Button>
+          ),
+          ['DRAFT', 'NEGOTIATING', 'CONFIRMED'].includes(order.status) && (
+            <Button key="cancel" danger onClick={() => setCancelModalOpen(true)}>
+              Hủy đơn
+            </Button>
+          )
+        ]}
+      >
+        <div className="py-1">
+          <Tabs 
+            activeKey={activeTab} 
+            onChange={setActiveTab}
+            items={tabItems}
+          />
+        </div>
+      </Modal>
+
+      {/* Modal nhập lý do từ chối chứng từ */}
+      <RejectDocModal
+        open={rejectDocModalOpen}
+        onCancel={() => {
+          setRejectDocModalOpen(false);
+          setRejectingDocKey(null);
+        }}
+        rejectingDocObj={rejectingDocObj}
+        rejectDocReason={rejectDocReason}
+        setRejectDocReason={setRejectDocReason}
+        onConfirm={handleConfirmRejectDoc}
+        confirmLoading={submittingRejectDoc}
+      />
+
+      <CancelOrderModal
+        open={cancelModalOpen}
+        order={order}
+        onCancel={() => setCancelModalOpen(false)}
+        onConfirmCancel={handleExecuteCancel}
+      />
+
+      {/* Modal Tách đơn sang nhiều xe nhỏ theo chuẩn BR-29 */}
+      <SplitOrderModal
+        open={splitModalOpen}
+        order={order}
+        onCancel={() => setSplitModalOpen(false)}
+        onSuccess={(result) => {
+          onCancel?.();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('nexlog_orders_updated'));
+          }
+        }}
+      />
+
+      <DocumentAssistantDrawer
+        open={assistantDrawerOpen}
+        onClose={() => setAssistantDrawerOpen(false)}
+        onApplyRecommendations={handleApplyAssistantRecommendations}
+        currentCargo={order.cargo_name || order.cargo_type || ''}
+        order={order}
+      />
+
+      {/* Modal Mô phỏng xếp hàng 3D trong bước chốt xe với khách */}
+      {is3DModalOpen && (
+        <LoadPlan3DModal
+          open={is3DModalOpen}
+          onClose={() => setIs3DModalOpen(false)}
+          trip={{
+            id: `PREVIEW-${order.id || order.order_id}`,
+            trip_code: `XEM-XE-${selected3DVehicleType || proposedVehicleType}`,
+            truck_model: getVehicleSpecByKey(selected3DVehicleType || proposedVehicleType)?.label || 'Xe tải ALS',
+            plate: 'XE-DU-KIEN',
+            truck_length_cm: getVehicleSpecByKey(selected3DVehicleType || proposedVehicleType)?.length_cm || 420,
+            truck_width_cm: getVehicleSpecByKey(selected3DVehicleType || proposedVehicleType)?.width_cm || 190,
+            truck_height_cm: getVehicleSpecByKey(selected3DVehicleType || proposedVehicleType)?.height_cm || 190,
+            max_payload: getVehicleSpecByKey(selected3DVehicleType || proposedVehicleType)?.maxPayloadKg || 2500,
+            order: order
+          }}
+        />
+      )}
+    </>
+  );
+}
