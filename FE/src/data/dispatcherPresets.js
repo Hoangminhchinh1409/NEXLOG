@@ -169,6 +169,25 @@ export const ALS_NOI_BAI_TERMINAL = {
   lng: 105.8042
 };
 
+export const DEFAULT_ALS_WAREHOUSE = {
+  raw_id: 1,
+  name: 'Kho ALS Cảng HKQT Nội Bài (ALSC)',
+  address: 'Cảng Hàng không Quốc tế Nội Bài, Sóc Sơn, Hà Nội',
+  province: 'Hà Nội',
+  lat: 21.2187,
+  lng: 105.8042,
+  is_als_hub: true
+};
+
+export const formatAlsWarehouseOptionLabel = (loc) => {
+  const name = (loc?.name || '').trim();
+  const province = (loc?.province || '').trim();
+  if (!province || name.toLowerCase().includes(province.toLowerCase())) {
+    return `🏢 ${name}`;
+  }
+  return `🏢 ${name} (${province})`;
+};
+
 // 4 kho hàng của ALS tại Nội Bài phân bổ hàng hóa
 export const ALS_NOI_BAI_WAREHOUSES = [
   { id: 'WH-1', name: 'Kho ALS 1 (Nội Bài Cargo Terminal 1)', code: 'ALS-NB-01' },
@@ -549,9 +568,15 @@ export const getVehicleSpecByKey = (vehicleKey) => {
   if (exactTonMatch) return exactTonMatch;
 
   // Nếu chuỗi là '8T', '15T' hoặc >= 8 tấn không được hỗ trợ trong specs
-  if (normalized === '8T' || normalized === '15T' || normalized === '8' || normalized === '15') {
+  if (normalized === '8T' || normalized === '15T' || normalized === '8' || normalized === '15' || normalized === 'TRUCK_8T' || normalized === 'TRUCK_15T') {
     return null;
   }
+
+  // Hỗ trợ ánh xạ các biến thể container & xe tải nhẹ trong dropdown
+  if (normalized === 'VAN_500KG' || normalized.includes('500KG')) return VEHICLE_SPECS[0];
+  if (normalized === 'TRUCK_1.5T' || normalized === '1.5T' || normalized === 'TRUCK_1.9T' || normalized === '1.9T') return VEHICLE_SPECS[1];
+  if (normalized.startsWith('CONTAINER_20')) return VEHICLE_SPECS[4];
+  if (normalized.startsWith('CONTAINER_40')) return VEHICLE_SPECS[5];
 
   // Hỗ trợ tìm kiếm theo số tấn trong chuỗi
   const numericMatch = VEHICLE_SPECS.find(v => v.key === normalized || v.shortLabel.includes(normalized));
@@ -649,7 +674,7 @@ export const analyzeVehicleRecommendation = ({
 
   const customerSpec = getVehicleSpecByKey(customerRequestedVehicle);
   const recIdx = VEHICLE_SPECS.findIndex(v => v.key === recommendedSpec.key);
-  const custIdx = VEHICLE_SPECS.findIndex(v => v.key === customerSpec.key);
+  const custIdx = customerSpec ? VEHICLE_SPECS.findIndex(v => v.key === customerSpec.key) : -1;
 
   let status = 'OPTIMAL'; // 'OPTIMAL' | 'UNDER_CAPACITY' | 'OVER_CAPACITY' | 'EXCEEDS_FLEET'
   let reason = `Loại xe ${customerSpec?.label || 'được chọn'} (${customerSpec?.boxDimText || ''}, tải ${customerSpec?.maxPayloadKg?.toLocaleString('vi-VN') || 0} kg) hoàn toàn phù hợp với lô hàng (${effectiveWeight.toLocaleString('vi-VN')} kg${totalVolM3 > 0 ? `, ~${totalVolM3} m³`: ''}).`;
@@ -691,7 +716,7 @@ export const analyzeVehicleRecommendation = ({
   return {
     recommendedVehicleKey: recommendedSpec.key,
     recommendedSpec,
-    customerRequestedKey: customerSpec.key,
+    customerRequestedKey: customerSpec?.key || customerRequestedVehicle || null,
     customerSpec,
     effectiveWeightKg: effectiveWeight,
     totalVolumeM3: totalVolM3,

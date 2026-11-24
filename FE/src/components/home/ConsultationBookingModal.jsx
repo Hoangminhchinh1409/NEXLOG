@@ -7,10 +7,12 @@ import {
   calculateAlsPricing, 
   calculateExportPickupSuggestion, 
   analyzeVehicleRecommendation,
-  getVehicleSpecByKey 
+  getVehicleSpecByKey,
+  DEFAULT_ALS_WAREHOUSE
 } from '../../data/dispatcherPresets';
 import { ConsultationRouteSection } from './consultation/ConsultationRouteSection';
 import { ConsultationReceiverSection, ConsultationCargoSection } from './consultation/ConsultationSections';
+import { validateVietnamAddressText } from '../common/LocationSearchInput';
 
 const CUSTOMS_SERVICE_FEE = 500000;
 
@@ -23,33 +25,43 @@ const ConsultationBookingModal = ({ open, onCancel, onSuccess }) => {
   // Quản lý chế độ chọn địa điểm: 'PRESET' hoặc 'CUSTOM'
   const [pickupMode, setPickupMode] = useState('PRESET');
   const [deliveryMode, setDeliveryMode] = useState('CUSTOM');
-  const [selectedPickupPreset, setSelectedPickupPreset] = useState('ALS_NOI_BAI');
-  const [selectedDeliveryPreset, setSelectedDeliveryPreset] = useState('ALS_NOI_BAI');
+  const [selectedPickupPreset, setSelectedPickupPreset] = useState(undefined);
+  const [selectedDeliveryPreset, setSelectedDeliveryPreset] = useState(undefined);
   const [customsServiceRequired, setCustomsServiceRequired] = useState(false);
   
   // Khởi tạo tọa độ mặc định ban đầu: Ga ALS Nội Bài
   const [pickupCoords, setPickupCoords] = useState({ lat: 21.2187, lng: 105.8042 });
   const [deliveryCoords, setDeliveryCoords] = useState(null);
 
-  // Tải danh sách điểm giao nhận công khai (không cần đăng nhập tài khoản nhân viên)
+  // Tải danh sách kho thực tế của ALS công khai (không cần đăng nhập tài khoản nhân viên)
   useEffect(() => {
     let active = true;
     const fetchLocations = async () => {
       try {
         const locs = await orderApi.getPublicLocations();
-        if (active && Array.isArray(locs) && locs.length > 0) {
-          setDbLocations(locs);
-          const firstAls = locs.find(l => l.is_als_hub || l.raw_id === 1 || l.id === 1);
-          if (firstAls) {
-            setSelectedPickupPreset(firstAls.raw_id || firstAls.id);
-            form.setFieldsValue({
-              pickup_address: firstAls.address || firstAls.name
-            });
-            setPickupCoords({ lat: firstAls.lat || 21.2187, lng: firstAls.lng || 105.8042 });
+        const alsLocs = Array.isArray(locs) ? locs.filter(l => l.is_als_hub === true) : [];
+        if (active && alsLocs.length > 0) {
+          setDbLocations(alsLocs);
+          const defaultAls = alsLocs.find(l => Number(l.raw_id) === 1) || alsLocs[0];
+          const defaultAlsId = defaultAls.raw_id || defaultAls.id;
+          const alsAddr = defaultAls.address || defaultAls.name;
+          const alsCoords = {
+            lat: defaultAls.lat || DEFAULT_ALS_WAREHOUSE.lat,
+            lng: defaultAls.lng || DEFAULT_ALS_WAREHOUSE.lng
+          };
+          setSelectedPickupPreset(defaultAlsId);
+          setSelectedDeliveryPreset(defaultAlsId);
+          const currentDir = form.getFieldValue('shipping_direction') || 'IMPORT';
+          if (currentDir === 'EXPORT') {
+            form.setFieldsValue({ delivery_address: alsAddr });
+            setDeliveryCoords(alsCoords);
+          } else {
+            form.setFieldsValue({ pickup_address: alsAddr });
+            setPickupCoords(alsCoords);
           }
         }
       } catch (err) {
-        console.warn('Không tải được danh sách điểm giao nhận công khai:', err);
+        console.warn('Không tải được danh sách kho ALS công khai:', err);
       }
     };
     if (open) {
@@ -79,13 +91,8 @@ const ConsultationBookingModal = ({ open, onCancel, onSuccess }) => {
   const handleDirectionChange = (val) => {
     setShippingDirection(val);
     form.setFieldsValue({ shipping_direction: val });
-    const defaultAls = dbLocations.find(l => l.is_als_hub || l.raw_id === 1 || l.id === 1) || {
-      name: 'Kho ALS Cảng HKQT Nội Bài',
-      address: 'Sân bay Quốc tế Nội Bài, Sóc Sơn, Hà Nội',
-      lat: 21.2187,
-      lng: 105.8042,
-      raw_id: 1
-    };
+    const alsLocs = dbLocations.filter(l => l.is_als_hub === true);
+    const defaultAls = alsLocs.find(l => Number(l.raw_id) === 1) || alsLocs[0] || DEFAULT_ALS_WAREHOUSE;
 
     if (val === 'IMPORT') {
       setPickupMode('PRESET');
@@ -299,26 +306,26 @@ const ConsultationBookingModal = ({ open, onCancel, onSuccess }) => {
       const resolvedPickupAddr =
         formValues.pickup_address ||
         form.getFieldValue('pickup_address') ||
-        (shippingDirection === 'IMPORT' ? 'Nhà Ga Hàng Hóa ALS Nội Bài' : '');
+        (shippingDirection === 'IMPORT' ? DEFAULT_ALS_WAREHOUSE.address : '');
       const resolvedDeliveryAddr =
         formValues.delivery_address ||
         form.getFieldValue('delivery_address') ||
-        (shippingDirection === 'EXPORT' ? 'Nhà Ga Hàng Hóa ALS Nội Bài' : '');
+        (shippingDirection === 'EXPORT' ? DEFAULT_ALS_WAREHOUSE.address : '');
 
-      // Kiểm tra nghiêm ngặt địa chỉ khách nhập: phải có đủ Địa chỉ cụ thể + Phường/Xã + Tỉnh/Thành phố (chuẩn hành chính 2026)
+      // Kiểm tra nghiêm ngặt địa chỉ khách nhập: phải có đủ Địa chỉ cụ thể hợp nghĩa + Phường/Xã + Tỉnh/TP + VietMap
       if (pickupMode === 'CUSTOM' || shippingDirection === 'EXPORT') {
-        const pickupParts = (resolvedPickupAddr || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (pickupParts.length < 3 || (resolvedPickupAddr || '').trim().length < 10) {
-          message.error('Vui lòng nhập Địa chỉ cụ thể và chọn đầy đủ Phường/Xã, Tỉnh/Thành phố cho Điểm lấy hàng (A)!');
+        const pickupCheck = validateVietnamAddressText(resolvedPickupAddr || '', { requireVietmap: true });
+        if (!pickupCheck.valid) {
+          message.error(`Điểm lấy hàng (A): ${pickupCheck.reason}`);
           setSubmitting(false);
           return;
         }
       }
 
       if (deliveryMode === 'CUSTOM' || shippingDirection === 'IMPORT') {
-        const deliveryParts = (resolvedDeliveryAddr || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (deliveryParts.length < 3 || (resolvedDeliveryAddr || '').trim().length < 10) {
-          message.error('Vui lòng nhập Địa chỉ cụ thể và chọn đầy đủ Phường/Xã, Tỉnh/Thành phố cho Điểm nhận hàng (B)!');
+        const deliveryCheck = validateVietnamAddressText(resolvedDeliveryAddr || '', { requireVietmap: true });
+        if (!deliveryCheck.valid) {
+          message.error(`Điểm nhận hàng (B): ${deliveryCheck.reason}`);
           setSubmitting(false);
           return;
         }
@@ -350,6 +357,8 @@ const ConsultationBookingModal = ({ open, onCancel, onSuccess }) => {
         length_cm: cargoItems[0]?.length_cm || 0,
         width_cm: cargoItems[0]?.width_cm || 0,
         height_cm: cargoItems[0]?.height_cm || 0,
+        pickup_location_id: shippingDirection === 'IMPORT' && typeof selectedPickupPreset === 'number' ? selectedPickupPreset : null,
+        delivery_location_id: shippingDirection === 'EXPORT' && typeof selectedDeliveryPreset === 'number' ? selectedDeliveryPreset : null,
         pickup_coords: pickupCoords,
         delivery_coords: deliveryCoords,
         estimated_distance_km: routeInfo.distanceKm,
@@ -358,7 +367,7 @@ const ConsultationBookingModal = ({ open, onCancel, onSuccess }) => {
         split_details: formValues.request_split_trucks ? {
           split_count: formValues.split_truck_count || 2,
           vehicle_target: formValues.split_target_vehicle || 'TRUCK_2.5T',
-          vehicle_target_label: getVehicleSpecByKey(formValues.split_target_vehicle || 'TRUCK_2.5T').label,
+          vehicle_target_label: getVehicleSpecByKey(formValues.split_target_vehicle || 'TRUCK_2.5T')?.label || formValues.split_target_vehicle || 'Xe tải 2.5 tấn',
           reason: formValues.split_reason || 'Đường kho hẹp/cấm xe tải trọng lớn'
         } : null
       };
@@ -381,8 +390,11 @@ const ConsultationBookingModal = ({ open, onCancel, onSuccess }) => {
     setShippingDirection('IMPORT');
     setPickupMode('PRESET');
     setDeliveryMode('CUSTOM');
-    setSelectedPickupPreset('ALS_NOI_BAI');
-    setSelectedDeliveryPreset('ALS_NOI_BAI');
+    const alsLocs = dbLocations.filter(l => l.is_als_hub === true);
+    const defaultAls = alsLocs.find(l => Number(l.raw_id) === 1) || alsLocs[0];
+    const defaultAlsId = defaultAls ? (defaultAls.raw_id || defaultAls.id) : undefined;
+    setSelectedPickupPreset(defaultAlsId);
+    setSelectedDeliveryPreset(defaultAlsId);
     setCustomsServiceRequired(false);
     setPickupCoords({ lat: 21.2187, lng: 105.8042 });
     setDeliveryCoords(null);
@@ -453,7 +465,7 @@ const ConsultationBookingModal = ({ open, onCancel, onSuccess }) => {
             layout="vertical"
             initialValues={{
               shipping_direction: 'IMPORT',
-              pickup_address: 'Nhà Ga Hàng Hóa ALS Nội Bài',
+              pickup_address: DEFAULT_ALS_WAREHOUSE.address,
               delivery_address: '',
               customer_tax_code: '',
               vehicle_type_required: 'TRUCK_2.5T',

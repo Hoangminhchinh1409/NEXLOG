@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Modal, Form, Input, message, Progress } from 'antd';
-import { FileText, Sparkles, UploadCloud, CheckCircle2, AlertCircle } from 'lucide-react';
+import { FileText, Sparkles, UploadCloud, CheckCircle2 } from 'lucide-react';
 import { 
   calculateRouteEstimate, 
   calculateAlsPricing,
@@ -9,9 +9,11 @@ import {
   analyzeVehicleRecommendation,
   getVehicleSpecByKey,
   BASIC_CUSTOMS_DOCUMENTS,
-  SPECIALIZED_CARGO_CATEGORIES
+  SPECIALIZED_CARGO_CATEGORIES,
+  DEFAULT_ALS_WAREHOUSE
 } from '../../data/dispatcherPresets';
 import { dispatcherApi } from '../../api/dispatcherApi';
+import { uploadApi } from '../../api/uploadApi';
 import DocumentAssistantDrawer from './DocumentAssistantDrawer';
 
 // Các module chức năng đã được tách gọn
@@ -21,6 +23,7 @@ import OrderFormVehicleSection from './orderForm/OrderFormVehicleSection';
 import OrderFormCargoSection from './orderForm/OrderFormCargoSection';
 import OrderFormPricingSection from './orderForm/OrderFormPricingSection';
 import OrderFormDocumentsSection from './orderForm/OrderFormDocumentsSection';
+import { validateVietnamAddressText } from '../common/LocationSearchInput';
 
 const CUSTOMS_SERVICE_FEE = 500000; // Phí dịch vụ làm thủ tục hải quan hộ (VNĐ)
 
@@ -31,8 +34,8 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
   // Chế độ chọn kho bãi: 'PRESET' hoặc 'CUSTOM'
   const [pickupMode, setPickupMode] = useState('PRESET');
   const [deliveryMode, setDeliveryMode] = useState('CUSTOM');
-  const [selectedPickupPreset, setSelectedPickupPreset] = useState('ALS_NOI_BAI');
-  const [selectedDeliveryPreset, setSelectedDeliveryPreset] = useState('ALS_NOI_BAI');
+  const [selectedPickupPreset, setSelectedPickupPreset] = useState(undefined);
+  const [selectedDeliveryPreset, setSelectedDeliveryPreset] = useState(undefined);
 
   // Tích chọn làm thủ tục hải quan hộ
   const [customsServiceRequired, setCustomsServiceRequired] = useState(false);
@@ -66,25 +69,35 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
   const [aiScanResult, setAiScanResult] = useState(null);
   const aiFileInputRef = useRef(null);
 
-  // Tải danh sách điểm giao nhận từ database
+  // Tải danh sách kho thực tế của ALS từ database
   useEffect(() => {
     let active = true;
     const fetchLocations = async () => {
       try {
-        const locs = await dispatcherApi.getLocations();
-        if (active && Array.isArray(locs)) {
-          setDbLocations(locs);
-          const firstAls = locs.find(l => l.is_als_hub || l.raw_id === 1 || l.id === 1);
-          if (firstAls) {
-            setSelectedPickupPreset(firstAls.raw_id || firstAls.id);
-            form.setFieldsValue({
-              pickup_address: firstAls.address || firstAls.name
-            });
-            setPickupCoords({ lat: firstAls.lat || 21.2187, lng: firstAls.lng || 105.8042 });
+        const locs = await dispatcherApi.getAlsWarehouses();
+        const alsLocs = Array.isArray(locs) ? locs.filter(l => l.is_als_hub === true) : [];
+        if (active && alsLocs.length > 0) {
+          setDbLocations(alsLocs);
+          const defaultAls = alsLocs.find(l => Number(l.raw_id) === 1) || alsLocs[0];
+          const defaultAlsId = defaultAls.raw_id || defaultAls.id;
+          const alsAddr = defaultAls.address || defaultAls.name;
+          const alsCoords = {
+            lat: defaultAls.lat || DEFAULT_ALS_WAREHOUSE.lat,
+            lng: defaultAls.lng || DEFAULT_ALS_WAREHOUSE.lng
+          };
+          setSelectedPickupPreset(defaultAlsId);
+          setSelectedDeliveryPreset(defaultAlsId);
+          const currentDir = form.getFieldValue('shipping_direction') || 'IMPORT';
+          if (currentDir === 'EXPORT') {
+            form.setFieldsValue({ delivery_address: alsAddr });
+            setDeliveryCoords(alsCoords);
+          } else {
+            form.setFieldsValue({ pickup_address: alsAddr });
+            setPickupCoords(alsCoords);
           }
         }
       } catch (err) {
-        console.error('Không tải được danh sách điểm giao nhận:', err);
+        console.error('Không tải được danh sách kho ALS:', err);
       }
     };
     if (open) {
@@ -115,13 +128,8 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
     setShippingDirection(direction);
     form.setFieldsValue({ shipping_direction: direction });
     const custAddr = form.getFieldValue('customer_address') || '';
-    const defaultAls = dbLocations.find(l => l.is_als_hub || l.raw_id === 1 || l.id === 1) || {
-      name: 'Kho ALS Cảng HKQT Nội Bài',
-      address: 'Sân bay Quốc tế Nội Bài, Sóc Sơn, Hà Nội',
-      lat: 21.2187,
-      lng: 105.8042,
-      raw_id: 1
-    };
+    const alsLocs = dbLocations.filter(l => l.is_als_hub === true);
+    const defaultAls = alsLocs.find(l => Number(l.raw_id) === 1) || alsLocs[0] || DEFAULT_ALS_WAREHOUSE;
 
     if (direction === 'IMPORT') {
       setPickupMode('PRESET');
@@ -184,7 +192,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
 
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
     if (!validTypes.includes(file.type)) {
-      message.error('Vui lòng chọn tệp định dạng PDF hoặc ảnh (JPG, PNG) của Tờ khai hoặc HAWB!');
+      message.error('Vui lòng chọn tệp định dạng PDF hoặc ảnh (JPG, PNG) của Tờ khai / Chứng từ!');
       return;
     }
 
@@ -241,9 +249,8 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
           receiver_phone: extracted.receiver_phone || extracted.customer_phone || form.getFieldValue('receiver_phone'),
           customer_address: extracted.delivery_address || form.getFieldValue('customer_address'),
           delivery_address: extracted.delivery_address || form.getFieldValue('delivery_address'),
-          hawb_number: extracted.hawb_number || '',
           declaration_number: extracted.declaration_number || '',
-          order_notes: `[AI OCR: ${file.name}] Mã tờ khai: ${extracted.declaration_number || 'N/A'} - HAWB: ${extracted.hawb_number || 'N/A'}`
+          order_notes: `[AI OCR: ${file.name}] Mã tờ khai: ${extracted.declaration_number || 'N/A'}`
         });
 
         // Tự động Geocode tọa độ địa chỉ giao hàng
@@ -411,10 +418,11 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
 
   const estimatedBaselineRate = estimatedPricing.totalRate || 0;
 
+  const flightDatetime = watchedValues?.flight_datetime;
   const exportPickupSuggestion = useMemo(() => {
-    if (shippingDirection !== 'EXPORT' || !watchedValues?.flight_datetime) return null;
-    return calculateExportPickupSuggestion(watchedValues.flight_datetime, routeInfo.distanceKm || 30);
-  }, [shippingDirection, watchedValues?.flight_datetime, routeInfo.distanceKm]);
+    if (shippingDirection !== 'EXPORT' || !flightDatetime) return null;
+    return calculateExportPickupSuggestion(flightDatetime, routeInfo.distanceKm || 30);
+  }, [shippingDirection, flightDatetime, routeInfo.distanceKm]);
 
   useEffect(() => {
     if (estimatedBaselineRate > 0 && !form.isFieldTouched('agreed_price')) {
@@ -440,7 +448,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
     }
   };
 
-  const handleDocFileChange = (e) => {
+  const handleDocFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !uploadingDocKey) return;
 
@@ -450,16 +458,17 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
 
     const now = new Date();
     const dateStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')} ${now.getDate()}/${now.getMonth() + 1}`;
+    const targetDocKey = uploadingDocKey;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64Data = reader.result;
+    try {
+      const uploaded = await uploadApi.uploadToCloudinary(file, 'nexlog/orders/new/docs');
       setDocuments(prev => prev.map(d => {
-        if (d.key === uploadingDocKey) {
+        if (d.key === targetDocKey) {
           return {
             ...d,
             file: file.name,
-            file_data: base64Data,
+            file_url: uploaded.url,
+            file_data: uploaded.url,
             size: fileSizeStr,
             uploadDate: dateStr,
             status: 'APPROVED'
@@ -467,10 +476,12 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
         }
         return d;
       }));
-      message.success(`Đã đính kèm tệp "${file.name}" cho chứng từ!`);
+      message.success(`Đã tải lên Cloudinary và đính kèm tệp "${file.name}" cho chứng từ!`);
+    } catch (err) {
+      message.error(err.message || 'Không thể tải tệp chứng từ lên Cloudinary.');
+    } finally {
       setUploadingDocKey(null);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleAddDirectCustomDoc = () => {
@@ -528,8 +539,11 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
     setDeliveryCoords(null);
     setPickupMode('PRESET');
     setDeliveryMode('CUSTOM');
-    setSelectedPickupPreset('ALS_NOI_BAI');
-    setSelectedDeliveryPreset('ALS_NOI_BAI');
+    const alsLocs = dbLocations.filter(l => l.is_als_hub === true);
+    const defaultAls = alsLocs.find(l => Number(l.raw_id) === 1) || alsLocs[0];
+    const defaultAlsId = defaultAls ? (defaultAls.raw_id || defaultAls.id) : undefined;
+    setSelectedPickupPreset(defaultAlsId);
+    setSelectedDeliveryPreset(defaultAlsId);
     setCustomsServiceRequired(false);
     onCancel();
   };
@@ -563,19 +577,27 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
         return;
       }
 
-      // Kiểm tra bắt buộc đủ Địa chỉ cụ thể + Phường/Xã + Tỉnh/Thành phố chuẩn hành chính 2026
+      // Kiểm tra bắt buộc đủ Địa chỉ cụ thể hợp nghĩa + Phường/Xã + Tỉnh/Thành phố + VietMap (2026)
+      if (fieldValues.customer_address && String(fieldValues.customer_address).trim()) {
+        const custCheck = validateVietnamAddressText(fieldValues.customer_address, { requireVietmap: true });
+        if (!custCheck.valid) {
+          message.error(`Địa chỉ trụ sở / kho của khách hàng không hợp lệ: ${custCheck.reason}`);
+          return;
+        }
+      }
+
       if (pickupMode === 'CUSTOM' || shippingDirection === 'EXPORT') {
-        const pickupParts = (fieldValues.pickup_address || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (pickupParts.length < 3 || (fieldValues.pickup_address || '').trim().length < 10) {
-          message.error('Vui lòng nhập Địa chỉ cụ thể và chọn đầy đủ Phường/Xã, Tỉnh/Thành phố cho Điểm lấy hàng (A)!');
+        const pickupCheck = validateVietnamAddressText(fieldValues.pickup_address || '', { requireVietmap: true });
+        if (!pickupCheck.valid) {
+          message.error(`Điểm lấy hàng (A): ${pickupCheck.reason}`);
           return;
         }
       }
 
       if (deliveryMode === 'CUSTOM' || shippingDirection === 'IMPORT') {
-        const deliveryParts = (fieldValues.delivery_address || '').split(',').map(s => s.trim()).filter(Boolean);
-        if (deliveryParts.length < 3 || (fieldValues.delivery_address || '').trim().length < 10) {
-          message.error('Vui lòng nhập Địa chỉ cụ thể và chọn đầy đủ Phường/Xã, Tỉnh/Thành phố cho Điểm giao hàng (B)!');
+        const deliveryCheck = validateVietnamAddressText(fieldValues.delivery_address || '', { requireVietmap: true });
+        if (!deliveryCheck.valid) {
+          message.error(`Điểm giao hàng (B): ${deliveryCheck.reason}`);
           return;
         }
       }
@@ -622,6 +644,8 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
         height_cm: primaryItem.cargo_type === 'BULK' ? 0 : (primaryItem.height_cm || 0),
         weight_kg: parseFloat(totals.actualWeight) || 0,
         chargeable_weight: parseFloat(totals.chargeableWeight) || 0,
+        pickup_location_id: shippingDirection === 'IMPORT' && typeof selectedPickupPreset === 'number' ? selectedPickupPreset : null,
+        delivery_location_id: shippingDirection === 'EXPORT' && typeof selectedDeliveryPreset === 'number' ? selectedDeliveryPreset : null,
         pickup_coords: pickupCoords,
         delivery_coords: deliveryCoords,
         estimated_distance_km: routeInfo.distanceKm,
@@ -632,7 +656,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
         split_details: fieldValues.request_split_trucks ? {
           split_count: fieldValues.split_truck_count || 2,
           vehicle_target: fieldValues.split_target_vehicle || 'TRUCK_2.5T',
-          vehicle_target_label: getVehicleSpecByKey(fieldValues.split_target_vehicle || 'TRUCK_2.5T').label,
+          vehicle_target_label: getVehicleSpecByKey(fieldValues.split_target_vehicle || 'TRUCK_2.5T')?.label || fieldValues.split_target_vehicle || 'Xe tải 2.5 tấn',
           reason: fieldValues.split_reason || 'Đường kho hẹp/cấm xe tải lớn'
         } : null,
         created_at: new Date().toISOString()
@@ -690,7 +714,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
                 </span>
               </div>
               <p className="text-xs text-gray-500 mt-0.5">
-                Tự động bóc tách Tờ khai hải quan (VNACCS) / Vận đơn HAWB để điền form tự động
+                Tự động bóc tách Tờ khai hải quan (VNACCS) / Chứng từ vận chuyển để điền form tự động
               </p>
             </div>
           </div>
@@ -714,7 +738,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
               }`}
             >
               <UploadCloud size={15} />
-              {isAiScanning ? 'Đang phân tích...' : 'Tải lên Tờ khai / HAWB để AI đọc'}
+              {isAiScanning ? 'Đang phân tích...' : 'Tải lên Tờ khai để AI đọc'}
             </button>
           </div>
         </div>

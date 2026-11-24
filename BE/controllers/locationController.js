@@ -1,5 +1,6 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 const locationService = require('../services/locationService');
+const { serializePrisma } = require('../utils/prismaHelper');
 
 /**
  * Location Controller — Nhóm chức năng Quản lý Địa điểm / Kho bãi
@@ -9,11 +10,24 @@ const locationService = require('../services/locationService');
 
 const getAllLocations = async (req, res) => {
   try {
-    const formattedLocations = await locationService.getAllLocations();
+    const alsOnly = req.query?.als_only === 'true' || req.query?.als_only === '1';
+    const formattedLocations = alsOnly
+      ? await locationService.getAlsWarehouses()
+      : await locationService.getAllLocations();
     return res.json({ locations: formattedLocations });
   } catch (err) {
     console.error('getAllLocations error:', err);
     return res.status(500).json({ message: 'Lỗi tải danh sách địa điểm', error: err.message });
+  }
+};
+
+const getPublicAlsWarehouses = async (req, res) => {
+  try {
+    const locations = await locationService.getAlsWarehouses();
+    return res.json({ locations });
+  } catch (err) {
+    console.error('getPublicAlsWarehouses error:', err);
+    return res.status(500).json({ message: 'Lỗi tải danh sách kho ALS công khai', error: err.message });
   }
 };
 
@@ -24,7 +38,7 @@ const createLocation = async (req, res) => {
     return res.status(201).json({ message: 'Thêm địa điểm thành công', location: newLoc });
   } catch (err) {
     console.error('createLocation error:', err);
-    const statusCode = err.message.includes('bắt buộc') ? 400: 500;
+    const statusCode = err.statusCode || (err.message.includes('bắt buộc') ? 400 : 500);
     return res.status(statusCode).json({ message: err.message || 'Lỗi thêm địa điểm' });
   }
 };
@@ -36,7 +50,8 @@ const updateLocation = async (req, res) => {
     return res.json({ message: 'Cập nhật địa điểm thành công', location: updated });
   } catch (err) {
     console.error('updateLocation error:', err);
-    return res.status(500).json({ message: 'Lỗi cập nhật địa điểm', error: err.message });
+    const statusCode = err.statusCode || (err.message.includes('bắt buộc') ? 400 : 500);
+    return res.status(statusCode).json({ message: err.message || 'Lỗi cập nhật địa điểm', error: err.message });
   }
 };
 
@@ -58,15 +73,12 @@ const deleteLocation = async (req, res) => {
 // Tra cứu Danh sách Địa điểm / Kho bãi Read-only cho Manager
 const getLocations = async (req, res) => {
   try {
-    const { data: locations, error } = await supabase
-      .from('locations')
-      .select('*')
-      .order('id', { ascending: true });
-
-    if (error) throw error;
+    const locations = await prisma.locations.findMany({
+      orderBy: { id: 'asc' }
+    });
 
     return res.json({
-      locations: locations || [],
+      locations: serializePrisma(locations || []),
       is_read_only: true
     });
   } catch (error) {
@@ -77,6 +89,7 @@ const getLocations = async (req, res) => {
 
 module.exports = {
   getAllLocations,
+  getPublicAlsWarehouses,
   createLocation,
   updateLocation,
   deleteLocation,

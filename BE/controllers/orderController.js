@@ -27,7 +27,6 @@ const {
 const {
   updateAgreedPrice,
   customerAgreeOrderPrice,
-  customerNegotiateOrder,
   customerUploadDocuments,
   rejectOrderDocument,
   approveWebOrderDocuments,
@@ -43,7 +42,8 @@ const {
   assignTrip,
   cancelOrder,
   closeOrder,
-  splitOrder
+  splitOrder,
+  redirectOrderToAlsWarehouse
 } = require('./order/orderWorkflowController');
 
 module.exports = {
@@ -63,7 +63,6 @@ module.exports = {
   // Documents & Pricing
   updateAgreedPrice,
   customerAgreeOrderPrice,
-  customerNegotiateOrder,
   customerUploadDocuments,
   rejectOrderDocument,
   approveWebOrderDocuments,
@@ -78,5 +77,6 @@ module.exports = {
   assignTrip,
   cancelOrder,
   closeOrder,
-  splitOrder
+  splitOrder,
+  redirectOrderToAlsWarehouse
 };

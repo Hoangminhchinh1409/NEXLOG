@@ -16,7 +16,6 @@ BigInt.prototype.toJSON = function () {
     return Number.isSafeInteger(n) ? n : this.toString();
 };
 
-const supabase = require("./config/supabase");
 const prisma = require("./config/prisma");
 const apiRoutes = require("./routes");
 
@@ -28,7 +27,9 @@ const frontendOrigin = new URL(
 ).origin;
 
 app.use(compression());
-app.use(helmet());
+app.use(helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 app.use(cors({
     origin: (origin, callback) => {
@@ -70,18 +71,31 @@ app.use((err, req, res, next) => {
 
 const { initManagerJobs } = require("./jobs/managerJobs");
 
-app.listen(PORT, async () => {
+let managerJobsStarted = false;
+
+const connectPostgresWithRetry = async (attempt = 1, maxQuickRetries = 4) => {
     try {
-        const { error } = await supabase.from("orders").select("id").limit(1);
-        if (error) {
-            console.error("PostgreSQL (Supabase) connection failed:", error.message);
-        } else {
-            console.log("PostgreSQL (Supabase) connected successfully!");
+        await prisma.$queryRaw`SELECT 1`;
+        console.log("PostgreSQL (Prisma) connected successfully!");
+        if (!managerJobsStarted) {
+            managerJobsStarted = true;
             // Khởi động các Background Jobs của Phân hệ Quản lý
             initManagerJobs();
         }
     } catch (error) {
-        console.error("PostgreSQL connection failed:", error.message);
+        const delayMs = attempt <= maxQuickRetries
+            ? Math.min(15000, 1500 * Math.pow(2, attempt - 1))
+            : 30000;
+        console.warn(
+            `[PostgreSQL] Kết nối lần ${attempt} thất bại (${error?.message || error}). Tự động thử lại sau ${Math.round(delayMs / 1000)}s...`
+        );
+        setTimeout(() => {
+            connectPostgresWithRetry(attempt + 1, maxQuickRetries);
+        }, delayMs);
     }
+};
+
+app.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}`);
+    connectPostgresWithRetry();
 });

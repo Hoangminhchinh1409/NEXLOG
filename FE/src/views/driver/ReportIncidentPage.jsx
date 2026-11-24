@@ -5,6 +5,7 @@ import { Camera, AlertTriangle, ArrowLeft, Truck, MapPin, Info, ShieldAlert } fr
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { driverApi, queueOfflineAction } from "../../api/driverApi";
+import { uploadApi } from "../../api/uploadApi";
 
 export default function ReportIncidentPage() {
   const { message } = App.useApp();
@@ -19,6 +20,7 @@ export default function ReportIncidentPage() {
   const [activeTrip, setActiveTrip] = useState(null);
   const [tripId, setTripId] = useState(null);
   const [loadingTrip, setLoadingTrip] = useState(true);
+  const [gpsCoords, setGpsCoords] = useState(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramTripId = searchParams?.get("trip_id");
@@ -31,10 +33,11 @@ export default function ReportIncidentPage() {
       window.addEventListener("offline", handleOffline);
     }
 
+    let isCancelled = false;
     // Lấy thông tin chuyến xe đang chạy của tài xế để tự động gắn với sự cố
-    setLoadingTrip(true);
     driverApi.getActiveTrip()
       .then(res => {
+        if (isCancelled) return;
         let foundTrip = res?.trip || null;
         if (!foundTrip && Array.isArray(res?.upcomingTrips) && res.upcomingTrips.length > 0) {
           if (paramTripId) {
@@ -46,6 +49,14 @@ export default function ReportIncidentPage() {
         if (foundTrip) {
           setActiveTrip(foundTrip);
           setTripId(foundTrip.id);
+          const fallbackStop = (foundTrip.stops || []).find(s => s.status !== "Done" && s.location?.latitude) || (foundTrip.stops || []).find(s => s.location?.latitude);
+          if (fallbackStop?.location?.latitude && fallbackStop?.location?.longitude) {
+            setGpsCoords((prev) => prev || {
+              lat: Number(fallbackStop.location.latitude),
+              lng: Number(fallbackStop.location.longitude),
+              source: "Tọa độ trạm hiện tại"
+            });
+          }
         } else if (paramTripId) {
           setTripId(Number(paramTripId));
         }
@@ -58,7 +69,25 @@ export default function ReportIncidentPage() {
         setLoadingTrip(false);
       });
 
+    // Tự động lấy tọa độ GPS hiện trường từ thiết bị tài xế khi mở form báo cáo
+    if (typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setGpsCoords({
+            lat: Number(pos.coords.latitude.toFixed(6)),
+            lng: Number(pos.coords.longitude.toFixed(6)),
+            source: "GPS thiết bị"
+          });
+        },
+        () => {
+          // Giữ nguyên fallback theo tọa độ trạm nếu người dùng từ chối cấp quyền vị trí
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      );
+    }
+
     return () => {
+      isCancelled = true;
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
@@ -70,20 +99,24 @@ export default function ReportIncidentPage() {
       setSubmitting(true);
 
       const photoList = values.photos || [];
-      const photoUrls = photoList.length > 0 
-        ? photoList.map(p => p.url || p.thumbUrl || p.response?.url || "https://cdn.nexlog.vn/incident-sample.jpg")
-        : ["https://cdn.nexlog.vn/incident-default.jpg"];
+      const photoUrls = photoList
+        .map(p => p.url || p.response?.url || (isOffline ? p.thumbUrl : null))
+        .filter(Boolean);
 
       // Tìm điểm dừng chưa hoàn thành của chuyến đang chạy
       const currentStop = (activeTrip?.stops || []).find(s => s.status !== "Done") || activeTrip?.stops?.[0];
 
       const resolvedTripId = tripId || activeTrip?.id || (paramTripId ? Number(paramTripId) : undefined);
+      const resolvedLat = gpsCoords?.lat ?? (currentStop?.location?.latitude ? Number(currentStop.location.latitude) : null);
+      const resolvedLng = gpsCoords?.lng ?? (currentStop?.location?.longitude ? Number(currentStop.location.longitude) : null);
       const payload = {
         trip_id: resolvedTripId,
         trip_stop_id: currentStop?.id,
         type: values.type || "Other",
         description: values.description,
-        photos: photoUrls
+        photos: photoUrls,
+        incident_lat: resolvedLat,
+        incident_lng: resolvedLng
       };
 
       if (isOffline) {
@@ -176,9 +209,17 @@ export default function ReportIncidentPage() {
             </div>
           )}
 
-          <div className="text-[11px] text-blue-300/80 mt-2.5 pt-2 border-t border-slate-700/50 flex items-center gap-1.5">
-            <ShieldAlert size={12} className="text-blue-400 shrink-0" />
-            <span>Sự cố này sẽ tự động gắn trực tiếp vào chuyến xe trên.</span>
+          <div className="text-[11px] text-blue-300/80 mt-2.5 pt-2 border-t border-slate-700/50 space-y-1">
+            <div className="flex items-center gap-1.5">
+              <ShieldAlert size={12} className="text-blue-400 shrink-0" />
+              <span>Sự cố này sẽ tự động gắn trực tiếp vào chuyến xe trên.</span>
+            </div>
+            {gpsCoords && (
+              <div className="flex items-center gap-1.5 text-emerald-300 font-mono text-[10px]">
+                <MapPin size={11} className="text-emerald-400 shrink-0" />
+                <span>Vị trí GPS ghi nhận ({gpsCoords.source}): {gpsCoords.lat.toFixed(5)}, {gpsCoords.lng.toFixed(5)}</span>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -235,7 +276,23 @@ export default function ReportIncidentPage() {
               listType="picture-card" 
               maxCount={5} 
               multiple 
-              beforeUpload={() => false}
+              accept="image/*"
+              customRequest={async ({ file, onSuccess, onError }) => {
+                try {
+                  if (isOffline) {
+                    const dataUrl = await uploadApi.fileToDataUrl(file);
+                    onSuccess?.({ url: dataUrl });
+                    message.info("Đã lưu ảnh hiện trường tạm ngoại tuyến.");
+                    return;
+                  }
+                  const uploaded = await uploadApi.uploadToCloudinary(file, "nexlog/incidents");
+                  onSuccess?.({ url: uploaded.url });
+                  message.success("Đã tải ảnh hiện trường lên Cloudinary.");
+                } catch (err) {
+                  message.error(err.message || "Lỗi tải ảnh lên Cloudinary");
+                  onError?.(err);
+                }
+              }}
               className="upload-dark"
             >
               <div className="text-slate-400 flex flex-col items-center">

@@ -1,4 +1,4 @@
-import { fetchWithAuth, fetchWithoutAuth } from './apiClient';
+import { fetchWithAuth } from './apiClient';
 
 export const dispatcherApi = {
   // --- 1. Fleet & Drivers & Vendors ---
@@ -20,7 +20,7 @@ export const dispatcherApi = {
       });
       return data.truck;
     } catch (error) {
-      console.error('dispatcherApi.createTruck error:', error);
+      console.warn('dispatcherApi.createTruck warning:', error.message || error);
       throw error;
     }
   },
@@ -33,7 +33,7 @@ export const dispatcherApi = {
       });
       return data.truck;
     } catch (error) {
-      console.error('dispatcherApi.updateTruck error:', error);
+      console.warn('dispatcherApi.updateTruck warning:', error.message || error);
       throw error;
     }
   },
@@ -56,7 +56,7 @@ export const dispatcherApi = {
       });
       return data.driver;
     } catch (error) {
-      console.error('dispatcherApi.updateDriver error:', error);
+      console.warn('dispatcherApi.updateDriver warning:', error.message || error);
       throw error;
     }
   },
@@ -78,6 +78,16 @@ export const dispatcherApi = {
       return data.locations || [];
     } catch (error) {
       console.warn('dispatcherApi.getLocations warn:', error?.message);
+      return [];
+    }
+  },
+
+  getAlsWarehouses: async () => {
+    try {
+      const data = await fetchWithAuth('/locations?als_only=true');
+      return data.locations || [];
+    } catch (error) {
+      console.warn('dispatcherApi.getAlsWarehouses warn:', error?.message);
       return [];
     }
   },
@@ -183,7 +193,7 @@ export const dispatcherApi = {
       });
       return data.trip;
     } catch (error) {
-      console.error('dispatcherApi.createTrip error:', error);
+      console.warn('dispatcherApi.createTrip warning:', error.message || error);
       throw error;
     }
   },
@@ -252,9 +262,10 @@ export const dispatcherApi = {
     }
   },
 
-  getLeaveReassignments: async () => {
+  getLeaveReassignments: async (options = {}) => {
     try {
-      const data = await fetchWithAuth('/dispatcher/leave-reassignments');
+      const qs = options?.refresh ? '?refresh=1' : '';
+      const data = await fetchWithAuth(`/dispatcher/leave-reassignments${qs}`);
       return {
         reassignments: data?.reassignments || [],
         availableDrivers: data?.availableDrivers || []
@@ -282,10 +293,15 @@ export const dispatcherApi = {
   },
 
   // --- 5. Dashboard Stats ---
-  getDashboardStats: async () => {
+  getDashboardStats: async (options = {}) => {
     try {
-      const data = await fetchWithAuth('/dispatcher/dashboard-stats');
-      return data.stats;
+      const qs = options?.refresh ? '?refresh=1' : '';
+      const data = await fetchWithAuth(`/dispatcher/dashboard-stats${qs}`);
+      const baseKpi = data?.kpi || data?.stats || data || null;
+      if (baseKpi && typeof baseKpi === 'object' && Array.isArray(data?.incidentsSummary)) {
+        return { ...baseKpi, incidentsSummary: data.incidentsSummary };
+      }
+      return baseKpi;
     } catch (error) {
       console.warn('dispatcherApi.getDashboardStats warn:', error?.message);
       return null;

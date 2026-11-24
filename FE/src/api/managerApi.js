@@ -2,9 +2,11 @@ import { fetchWithAuth } from './apiClient';
 
 export const managerApi = {
   // 1. Thống kê Dashboard (Screen 16: Hybrid BI Overview)
-  getDashboardStats: async (period = '2026-10') => {
+  getDashboardStats: async (period = '2026-10', options = {}) => {
     try {
-      const data = await fetchWithAuth(`/manager/dashboard/overview?period=${encodeURIComponent(period)}`);
+      const params = new URLSearchParams({ period: period || 'ALL' });
+      if (options?.refresh) params.set('refresh', '1');
+      const data = await fetchWithAuth(`/manager/dashboard/overview?${params.toString()}`);
       return data;
     } catch (error) {
       console.error('managerApi.getDashboardStats Error:', error);
@@ -13,9 +15,13 @@ export const managerApi = {
   },
 
   // Báo cáo hiệu suất tài xế
-  getDriverPerformance: async (period) => {
+  getDriverPerformance: async (period, options = {}) => {
     try {
-      const url = period ? `/manager/drivers/performance?period=${encodeURIComponent(period)}`: '/manager/drivers/performance';
+      const params = new URLSearchParams();
+      if (period) params.set('period', period);
+      if (options?.refresh) params.set('refresh', '1');
+      const qs = params.toString();
+      const url = `/manager/drivers/performance${qs ? `?${qs}` : ''}`;
       const data = await fetchWithAuth(url);
       return data;
     } catch (error) {
@@ -232,6 +238,19 @@ export const managerApi = {
     }
   },
 
+  sendIncidentEmail: async (id, payload) => {
+    try {
+      const data = await fetchWithAuth(`/manager/incidents/${id}/send-email`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      return data;
+    } catch (error) {
+      console.error('managerApi.sendIncidentEmail Error:', error);
+      throw error;
+    }
+  },
+
   closeIncidentCase: async (id, payload) => {
     try {
       const data = await fetchWithAuth(`/manager/incidents/${id}/close`, {
@@ -318,79 +337,43 @@ export const managerApi = {
 
   // 6. NHÓM 7: QUẢN LÝ TIN TỨC
   getBlogs: async (params = {}) => {
-    try {
-      const query = new URLSearchParams(params).toString();
-      const endpoint = query ? `/manager/blogs?${query}`: '/manager/blogs';
-      const data = await fetchWithAuth(endpoint);
-      return data;
-    } catch (error) {
-      console.error('managerApi.getBlogs Error:', error);
-      throw error;
-    }
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/manager/blogs?${query}` : '/manager/blogs';
+    return await fetchWithAuth(endpoint);
   },
 
   createBlog: async (blogData) => {
-    try {
-      const data = await fetchWithAuth('/manager/blogs', {
-        method: 'POST',
-        body: JSON.stringify(blogData)
-      });
-      return data;
-    } catch (error) {
-      console.error('managerApi.createBlog Error:', error);
-      throw error;
-    }
+    return await fetchWithAuth('/manager/blogs', {
+      method: 'POST',
+      body: JSON.stringify(blogData)
+    });
   },
 
   updateBlog: async (blogId, blogData) => {
-    try {
-      const data = await fetchWithAuth(`/manager/blogs/${blogId}`, {
-        method: 'PUT',
-        body: JSON.stringify(blogData)
-      });
-      return data;
-    } catch (error) {
-      console.error('managerApi.updateBlog Error:', error);
-      throw error;
-    }
+    return await fetchWithAuth(`/manager/blogs/${blogId}`, {
+      method: 'PUT',
+      body: JSON.stringify(blogData)
+    });
   },
 
   updateBlogStatus: async (blogId, status) => {
-    try {
-      const data = await fetchWithAuth(`/manager/blogs/${blogId}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status })
-      });
-      return data;
-    } catch (error) {
-      console.error('managerApi.updateBlogStatus Error:', error);
-      throw error;
-    }
+    return await fetchWithAuth(`/manager/blogs/${blogId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
   },
 
   approveBlog: async (blogId) => {
-    try {
-      const data = await fetchWithAuth(`/manager/blogs/${blogId}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'PUBLISHED' })
-      });
-      return data;
-    } catch (error) {
-      console.error('managerApi.approveBlog Error:', error);
-      throw error;
-    }
+    return await fetchWithAuth(`/manager/blogs/${blogId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'PUBLISHED' })
+    });
   },
 
   deleteBlog: async (blogId) => {
-    try {
-      const data = await fetchWithAuth(`/manager/blogs/${blogId}`, {
-        method: 'DELETE'
-      });
-      return data;
-    } catch (error) {
-      console.error('managerApi.deleteBlog Error:', error);
-      throw error;
-    }
+    return await fetchWithAuth(`/manager/blogs/${blogId}`, {
+      method: 'DELETE'
+    });
   },
 
   // 7. Quản lý Tài khoản Nhân sự (Dispatcher & Driver) -  & 

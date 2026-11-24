@@ -75,8 +75,8 @@ export function TripDetailsDrawer({ selectedTripDetails, onClose }) {
                 <div className="flex-1">
                   <div className="flex justify-between items-center">
                     <span className="font-bold text-gray-800 text-xs">{stop.name}</span>
-                    <AntTag color={stop.type === 'PICKUP' ? 'blue' : stop.type === 'REST' ? 'orange' : stop.type === 'INCIDENT' ? 'red' : stop.type === 'TRANSSHIP' ? 'purple' : 'green'} className="text-[10px] m-0">
-                      {stop.type}
+                    <AntTag color={stop.type === 'PICKUP' ? 'blue' : stop.type === 'RETURN' ? 'volcano' : stop.type === 'REST' ? 'orange' : stop.type === 'INCIDENT' ? 'red' : stop.type === 'TRANSSHIP' ? 'purple' : 'green'} className="text-[10px] m-0">
+                      {stop.type === 'RETURN' ? 'HOÀN VỀ KHO ALS (RETURN)' : stop.type}
                     </AntTag>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mt-1.5 text-gray-600 text-[11px]">
@@ -335,7 +335,6 @@ export function Trip3DModal({ selectedTrip3D, onClose }) {
           : [
               {
                 order_id: selectedTrip3D.orders?.[0] || selectedTrip3D.id || 'NEX-140280',
-                hawb_code: selectedTrip3D.waybill_no || '180-87429103',
                 customer: selectedTrip3D.customer || 'Khách hàng vận tải',
                 weight: selectedTrip3D.total_weight || 700,
                 package_count: selectedTrip3D.orders_count || 4,

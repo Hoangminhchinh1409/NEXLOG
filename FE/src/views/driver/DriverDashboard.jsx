@@ -33,6 +33,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { driverApi, queueOfflineAction } from "../../api/driverApi";
+import { orderApi } from "../../api/orderApi";
 import Link from "next/link";
 import dayjs from "dayjs";
 import { useAuth } from "../../providers/AuthProvider";
@@ -44,10 +45,10 @@ import {
   getCachedTripDocuments,
 } from "../../utils/offlineQueue";
 
-// Helper nhận diện điểm lấy hàng (Pickup) hay điểm giao hàng (Drop-off) chuẩn nghiệp vụ ALS
+// Helper nhận diện điểm lấy hàng (Pickup), điểm giao hàng (Drop-off) hoặc điểm hoàn hàng về kho ALS (Return)
 const isPickupStop = (stop) => {
   if (!stop) return false;
-  const raw = String(stop.stop_type || stop.type || "")
+  const raw = String(stop.raw_stop_type || stop.stop_type || stop.type || "")
     .trim()
     .toUpperCase();
   if (raw === "PICKUP" || raw === "LẤY HÀNG" || raw === "LAY HANG") return true;
@@ -58,6 +59,9 @@ const isPickupStop = (stop) => {
     raw === "DELIVERY" ||
     raw === "GIAO HÀNG" ||
     raw === "GIAO HANG" ||
+    raw === "RETURN" ||
+    raw === "RETURN_TO_WAREHOUSE" ||
+    raw === "HOÀN KHO" ||
     raw === "REST" ||
     raw === "TRANSIT"
   ) {
@@ -65,6 +69,14 @@ const isPickupStop = (stop) => {
   }
   // Quy chuẩn nghiệp vụ vận tải ALS: Điểm dừng sequence 1 luôn là điểm lấy hàng (Pickup)
   return stop.sequence === 1;
+};
+
+const isReturnWarehouseStop = (stop) => {
+  if (!stop) return false;
+  const raw = String(stop.raw_stop_type || stop.stop_type || stop.type || "")
+    .trim()
+    .toUpperCase();
+  return raw === "RETURN" || raw === "RETURN_TO_WAREHOUSE" || raw === "HOÀN KHO";
 };
 
 const isDropoffStop = (stop) => {
@@ -154,47 +166,31 @@ export default function DriverDashboard() {
   const [activeStopTarget, setActiveStopTarget] = useState(null);
 
   // Form Inputs for Pickup (BR-11, BR-33)
-  const [cargoPhotoUrl, setCargoPhotoUrl] = useState(
-    "https://cdn.nexlog.vn/cargo-check-sample.jpg",
-  );
-  const [loadedCargoPhotoUrl, setLoadedCargoPhotoUrl] = useState(
-    "https://cdn.nexlog.vn/cargo-loaded-sample.jpg",
-  );
-  const [sealPhotoUrl, setSealPhotoUrl] = useState(
-    "https://cdn.nexlog.vn/seal-sample.jpg",
-  );
+  const [cargoPhotoUrl, setCargoPhotoUrl] = useState("");
+  const [loadedCargoPhotoUrl, setLoadedCargoPhotoUrl] = useState("");
+  const [sealPhotoUrl, setSealPhotoUrl] = useState("");
   const [sealNumber, setSealNumber] = useState("");
   const [loadedPackages, setLoadedPackages] = useState(50);
   const [loadedWeight, setLoadedWeight] = useState(500);
 
   // Form Inputs for POD & Delivery (BR-12)
-  const [podPhotoUrl, setPodPhotoUrl] = useState(
-    "https://cdn.nexlog.vn/pod-sample.jpg",
-  );
-  const [cutSealPhotoUrl, setCutSealPhotoUrl] = useState(
-    "https://cdn.nexlog.vn/cut-seal-sample.jpg",
-  );
-  const [unloadedCargoPhotoUrl, setUnloadedCargoPhotoUrl] = useState(
-    "https://cdn.nexlog.vn/unloaded-sample.jpg",
-  );
+  const [podPhotoUrl, setPodPhotoUrl] = useState("");
+  const [cutSealPhotoUrl, setCutSealPhotoUrl] = useState("");
+  const [unloadedCargoPhotoUrl, setUnloadedCargoPhotoUrl] = useState("");
   const [receiverName, setReceiverName] = useState("");
   const [docsHandedOver, setDocsHandedOver] = useState(true);
   const [deliveredPackages, setDeliveredPackages] = useState(50);
 
   // Form Inputs for Customer Refusal (BR-57)
   const [refusalReason, setRefusalReason] = useState("");
-  const [refusalCargoPhoto, setRefusalCargoPhoto] = useState(
-    "https://cdn.nexlog.vn/refusal-sample.jpg",
-  );
+  const [refusalCargoPhoto, setRefusalCargoPhoto] = useState("");
   const [refusalNote, setRefusalNote] = useState("");
 
   // Form Inputs for Extra Fee (BR-30)
   const [feeType, setFeeType] = useState("Bốc xếp thêm");
   const [feeAmount, setFeeAmount] = useState(200000);
   const [feeReason, setFeeReason] = useState("");
-  const [feePhotoUrl, setFeePhotoUrl] = useState(
-    "https://cdn.nexlog.vn/fee-receipt.jpg",
-  );
+  const [feePhotoUrl, setFeePhotoUrl] = useState("");
 
   const formatTripDateTime = (dateStr) => {
     if (!dateStr) return null;
@@ -275,7 +271,7 @@ export default function DriverDashboard() {
     const handleOnline = async () => {
       setIsOffline(false);
       message.success(
-        "Đã kết nối lại Internet. Đang đồng bộ dữ liệu ngoại tuyến (BR-27)...",
+        "Đã kết nối lại Internet. Đang tự động đồng bộ dữ liệu...",
       );
       try {
         const syncRes = await driverApi.syncPendingQueue();
@@ -449,7 +445,7 @@ export default function DriverDashboard() {
         });
         if (res.isOutsideRadius) {
           message.warning(
-            "Đã ghi nhận đến nơi. Cảnh báo: Tọa độ ngoài bán kính cho phép (MSG50)!",
+            "Đã ghi nhận đến nơi. Cảnh báo: Tọa độ ngoài bán kính cho phép!",
           );
         } else {
           message.success("Đã ghi nhận đến điểm dừng!");
@@ -508,7 +504,7 @@ export default function DriverDashboard() {
 
         if (res.suggestedWaitingFee && res.suggestedWaitingFee > 0) {
           message.warning(
-            `Thời gian chờ ${res.waitingMinutes}p vượt hạn mức (${res.freeWaitingMinutes}p). Gợi ý phụ phí chờ: ${res.suggestedWaitingFee.toLocaleString("vi-VN")} đ (BR-30)`,
+            `Thời gian chờ ${res.waitingMinutes}p vượt hạn mức (${res.freeWaitingMinutes}p). Gợi ý phụ phí chờ: ${res.suggestedWaitingFee.toLocaleString("vi-VN")} đ`,
           );
           setFeeType("Bốc xếp thêm");
           setFeeAmount(res.suggestedWaitingFee);
@@ -590,15 +586,21 @@ export default function DriverDashboard() {
   const handleSubmitPickup = async () => {
     const targetTrip = getActiveDisplayedTrip();
     if (!activeStopTarget || !targetTrip?.id) return;
+    if (!cargoPhotoUrl.trim() || !loadedCargoPhotoUrl.trim() || !sealPhotoUrl.trim()) {
+      message.error(
+        "Vui lòng chụp/tải đủ 3 ảnh (hàng trước bốc, trên xe, niêm chì & biển số)!",
+      );
+      return;
+    }
     if (!sealNumber.trim()) {
       message.error(
-        "Hãy chụp rõ số chì và biển số xe, rồi nhập số chì (MSG18)",
+        "Hãy chụp rõ số chì và biển số xe, rồi nhập số chì",
       );
       return;
     }
     if (!loadedPackages || !loadedWeight) {
       message.error(
-        "Vui lòng nhập số kiện và khối lượng hàng bốc thực tế (MSG02)",
+        "Vui lòng nhập số kiện và khối lượng hàng bốc thực tế",
       );
       return;
     }
@@ -606,7 +608,7 @@ export default function DriverDashboard() {
     const truckPayload = targetTrip.truck?.allowed_payload || 5000;
     if (parseFloat(loadedWeight) > truckPayload) {
       message.error(
-        `Tổng khối lượng ${loadedWeight} kg vượt tải trọng cho phép ${truckPayload} kg của xe. (MSG45)`,
+        `Tổng khối lượng ${loadedWeight} kg vượt tải trọng cho phép ${truckPayload} kg của xe.`,
       );
       return;
     }
@@ -665,7 +667,7 @@ export default function DriverDashboard() {
         await driverApi.recordStopEvent(targetTrip.id, activeStopTarget.id, {
           eventType: "Loading Done",
         });
-        message.success("Ghi nhận lấy hàng và niêm chì thành công! (BR-11)");
+        message.success("Ghi nhận lấy hàng và niêm chì thành công!");
         await fetchDashboardData();
       }
       setSealModalOpen(false);
@@ -676,28 +678,37 @@ export default function DriverDashboard() {
     }
   };
 
-  // 6. Workflow Action: Giao Hàng & POD (BR-12, BR-19, BR-24)
+  // 6. Workflow Action: Giao Hàng & POD (hoặc Hạ hàng hoàn tại Kho ALS & Đóng đơn)
   const handleSubmitDelivery = async () => {
     const targetTrip = getActiveDisplayedTrip();
     if (!activeStopTarget || !targetTrip?.id) return;
-    const isExport = activeStopTarget.order?.order_type === "Export";
+    const isReturnToAls = isReturnWarehouseStop(activeStopTarget);
+    const isExport =
+      !isReturnToAls && activeStopTarget.order?.order_type === "Export";
 
-    if (isExport) {
+    if (isReturnToAls) {
+      if (!unloadedCargoPhotoUrl?.trim() && !podPhotoUrl?.trim()) {
+        message.error(
+          "Vui lòng chụp ảnh hàng hóa đã hạ xuống Kho ALS lưu giữ!",
+        );
+        return;
+      }
+    } else if (isExport) {
       if (!cutSealPhotoUrl || !unloadedCargoPhotoUrl) {
         message.error(
-          "Hàng xuất khẩu bắt buộc chụp ảnh cắt chì và ảnh dỡ hàng (BR-12)",
+          "Hàng xuất khẩu bắt buộc chụp ảnh cắt chì và ảnh dỡ hàng",
         );
         return;
       }
     } else {
       if (!podPhotoUrl || !podPhotoUrl.trim()) {
-        message.error("Hãy chụp biên bản giao nhận đã ký (MSG20)");
+        message.error("Hãy chụp biên bản giao nhận đã ký (POD)");
         return;
       }
     }
 
-    if (!docsHandedOver) {
-      message.error("Vui lòng xác nhận đã bàn giao đủ chứng từ (BR-12)");
+    if (!isReturnToAls && !docsHandedOver) {
+      message.error("Vui lòng xác nhận đã bàn giao đủ chứng từ");
       return;
     }
 
@@ -705,10 +716,16 @@ export default function DriverDashboard() {
       setActionLoading(true);
       const coords = await getCurrentGps();
       const payload = {
-        pod_photo_url: podPhotoUrl,
+        pod_photo_url: isReturnToAls
+          ? podPhotoUrl || unloadedCargoPhotoUrl
+          : podPhotoUrl,
         cut_seal_photo_url: cutSealPhotoUrl,
-        unloaded_cargo_photo_url: unloadedCargoPhotoUrl,
-        receiver_name: receiverName.trim() || undefined,
+        unloaded_cargo_photo_url: isReturnToAls
+          ? unloadedCargoPhotoUrl || podPhotoUrl
+          : unloadedCargoPhotoUrl,
+        receiver_name:
+          receiverName.trim() ||
+          (isReturnToAls ? "Thủ kho ALS nhận hàng hoàn" : undefined),
         documents_handed_over: true,
         delivered_packages: deliveredPackages,
         ...coords,
@@ -764,7 +781,7 @@ export default function DriverDashboard() {
         );
         if (res.isTripCompleted) {
           message.success(
-            "Chúc mừng! Bạn đã hoàn thành toàn bộ chuyến xe (BR-24)!",
+            "Chúc mừng! Bạn đã hoàn thành toàn bộ chuyến xe!",
           );
           applyDeliveryUpdate(true);
         } else {
@@ -780,16 +797,16 @@ export default function DriverDashboard() {
     }
   };
 
-  // 7. Workflow Action: Khách không nhận hàng (BR-57, MSG74, MSG75)
+  // 7. Workflow Action: Khách không nhận hàng
   const handleSubmitRefusal = async () => {
     const targetTrip = getActiveDisplayedTrip();
     if (!activeStopTarget || !targetTrip?.id) return;
     if (!refusalReason.trim()) {
-      message.error("Vui lòng nhập lý do khách từ chối nhận hàng (MSG02)");
+      message.error("Vui lòng nhập lý do khách từ chối nhận hàng");
       return;
     }
     if (!refusalCargoPhoto.trim()) {
-      message.error("Vui lòng chụp ảnh hàng hóa bị từ chối (MSG02)");
+      message.error("Vui lòng chụp ảnh hàng hóa bị từ chối");
       return;
     }
 
@@ -832,7 +849,7 @@ export default function DriverDashboard() {
           payload,
         );
         message.success(
-          res.message || "Đã ghi nhận khách không nhận hàng. (MSG74)",
+          res.message || "Đã ghi nhận khách không nhận hàng.",
         );
         patchTripState(
           targetTrip.id,
@@ -848,6 +865,7 @@ export default function DriverDashboard() {
       }
       setRefusalModalOpen(false);
       setRefusalReason("");
+      setRefusalCargoPhoto("");
       setRefusalNote("");
     } catch (err) {
       message.error(err.message || "Lỗi khi gửi báo cáo từ chối nhận hàng");
@@ -897,11 +915,12 @@ export default function DriverDashboard() {
       } else {
         const res = await driverApi.proposeExtraFee(targetTrip.id, payload);
         message.success(
-          res.message || "Đã gửi đề xuất phụ phí cho Điều phối viên! (MSG85)",
+          res.message || "Đã gửi đề xuất phụ phí cho Điều phối viên!",
         );
       }
       setExtraFeeModalOpen(false);
       setFeeReason("");
+      setFeePhotoUrl("");
     } catch (err) {
       message.error(err.message || "Lỗi khi gửi đề xuất phụ phí");
     } finally {
@@ -987,24 +1006,44 @@ export default function DriverDashboard() {
         <div className="absolute top-0 -left-10 w-64 h-64 bg-indigo-500/15 rounded-full blur-3xl"></div>
       </div>
 
-      {/* PWA Connection Status Bar with Safe Area support */}
-      <div
-        className={`fixed top-0 left-0 right-0 max-w-md mx-auto z-40 px-3 pt-[max(0.4rem,env(safe-area-inset-top,0px))] pb-1.5 text-center text-xs font-bold text-white transition-all backdrop-blur-md border-b flex items-center justify-center gap-1.5 shadow-md ${
+      {/* PWA Connection Status Bar with Safe Area support & One-Click Offline Test Toggle */}
+      <button
+        type="button"
+        onClick={async () => {
+          const willBeOffline = !isOffline;
+          setIsOffline(willBeOffline);
+          if (willBeOffline) {
+            message.warning("Đã bật chế độ Ngoại Tuyến (Offline). Mọi thao tác và ảnh upload sẽ được lưu vào máy!");
+          } else {
+            message.success("Đã bật lại Trực Tuyến. Đang tự động đồng bộ lên máy chủ...");
+            try {
+              const syncRes = await driverApi.syncPendingQueue();
+              if (syncRes && syncRes.syncedCount > 0) {
+                message.success(`Đã đồng bộ thành công ${syncRes.syncedCount} tác vụ lên máy chủ!`);
+              }
+            } catch (err) {
+              console.error("Auto sync failed:", err);
+            }
+            void fetchDashboardData();
+          }
+        }}
+        title="Bấm vào đây để Bật/Tắt chế độ Mất Mạng để Test cực dễ"
+        className={`fixed top-0 left-0 right-0 max-w-md mx-auto z-40 px-3 pt-[max(0.4rem,env(safe-area-inset-top,0px))] pb-1.5 text-center text-xs font-bold text-white transition-all backdrop-blur-md border-b flex items-center justify-center gap-1.5 shadow-md cursor-pointer hover:opacity-95 active:scale-98 ${
           isOffline
-            ? "bg-red-600/90 border-red-500/50"
+            ? "bg-amber-600/95 border-amber-500/50"
             : "bg-emerald-600/90 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
         }`}
       >
         {isOffline ? (
           <>
-            <CloudOff size={13} /> LƯU TẠM (OFFLINE FIRST - BR-27)
+            <CloudOff size={13} className="animate-pulse" /> NGOẠI TUYẾN (BẤM VÀO ĐÂY ĐỂ BẬT LẠI MẠNG)
           </>
         ) : (
           <>
-            <Cloud size={13} /> KẾT NỐI MẠNG ỔN ĐỊNH
+            <Cloud size={13} /> KẾT NỐI MẠNG ỔN ĐỊNH (BẤM ĐỂ TEST MẤT MẠNG)
           </>
         )}
-      </div>
+      </button>
 
       <div className="w-full pt-[calc(3rem+env(safe-area-inset-top,0px))] px-3.5 relative z-10">
         {/* Header Hero Card (Blue-Purple Gradient Element) */}
@@ -1068,7 +1107,7 @@ export default function DriverDashboard() {
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <div className="text-[11px] leading-tight">
               <span className="font-bold block text-amber-300">
-                CẢNH BÁO GIỚI HẠN GIỜ LÁI XE (MSG65)
+                CẢNH BÁO GIỚI HẠN GIỜ LÁI XE
               </span>
               Tài xế sắp vượt giới hạn lái xe (4 giờ). Cần nghỉ ngơi trước{" "}
               {restDeadlineText}.
@@ -1076,13 +1115,12 @@ export default function DriverDashboard() {
           </div>
         )}
 
-        {/* WIDGET: Giờ lái an toàn còn lại (Screen 6.1 (4), BR-34) - Chỉ giữ giới hạn 4h liên tục */}
+        {/* WIDGET: Giờ lái an toàn còn lại - Chỉ giữ giới hạn 4h liên tục */}
         {drivingHours && (
           <div className="bg-slate-800/90 backdrop-blur-md border border-slate-700/80 rounded-2xl p-3 mb-3 shadow-xl">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                <Clock size={13} className="text-blue-400" /> Giờ lái liên tục
-                còn lại (BR-34)
+                <Clock size={13} className="text-blue-400" /> Giờ lái liên tục còn lại
               </span>
               <span className="text-[9px] text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-700/60">
                 Luật ATGT • Tối đa 4h
@@ -1415,44 +1453,69 @@ export default function DriverDashboard() {
                   const isDone = stop.status === "Done";
                   const isArrived = stop.status === "Arrived";
                   const isPickup = isPickupStop(stop);
+                  const isReturn = isReturnWarehouseStop(stop);
+                  const isOrderRefused =
+                    !isPickup &&
+                    !isReturn &&
+                    String(stop.order?.status || "")
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]+/g, "_") === "DELIVERED_EXCEPTION";
 
                   return (
                     <div key={stop.id} className="flex gap-3 relative z-10">
                       <div
                         className={`w-3.5 h-3.5 rounded-full flex-shrink-0 mt-1 shadow-lg ${
-                          isDone
-                            ? "bg-emerald-500 border-2 border-emerald-300"
-                            : isArrived
-                              ? "bg-amber-400 border-2 border-amber-200 animate-ping"
-                              : isPickup
-                                ? "bg-slate-900 border-[2.5px] border-blue-400"
-                                : "bg-slate-900 border-[2.5px] border-indigo-400"
+                          isOrderRefused
+                            ? "bg-red-500 border-2 border-red-200"
+                            : isDone
+                              ? "bg-emerald-500 border-2 border-emerald-300"
+                              : isArrived
+                                ? "bg-amber-400 border-2 border-amber-200 animate-ping"
+                                : isReturn
+                                  ? "bg-amber-500 border-2 border-amber-200"
+                                  : isPickup
+                                    ? "bg-slate-900 border-[2.5px] border-blue-400"
+                                    : "bg-slate-900 border-[2.5px] border-indigo-400"
                         }`}
                       />
                       <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] font-bold tracking-wide uppercase text-blue-200/80">
+                        <div className="flex items-center justify-between gap-1 flex-wrap">
+                          <p
+                            className={`text-[10px] font-bold tracking-wide uppercase ${
+                              isReturn
+                                ? "text-amber-300"
+                                : isOrderRefused
+                                  ? "text-red-300"
+                                  : "text-blue-200/80"
+                            }`}
+                          >
                             #{stop.sequence}{" "}
-                            {isPickup
-                              ? "LẤY HÀNG (PICKUP)"
-                              : "GIAO HÀNG (DROP-OFF)"}
+                            {isReturn
+                              ? "HOÀN HÀNG VỀ KHO ALS (RETURN)"
+                              : isPickup
+                                ? "LẤY HÀNG (PICKUP)"
+                                : "GIAO HÀNG (DROP-OFF)"}
                           </p>
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                              isDone
-                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                                : isArrived
-                                  ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                                  : stop.status === "Loading Started" ||
-                                      stop.status === "Loading Done"
-                                    ? "bg-blue-500/15 text-blue-300 border-blue-500/30"
-                                    : "bg-slate-800 text-slate-300 border-slate-700"
+                              isOrderRefused
+                                ? "bg-red-500/20 text-red-300 border-red-500/40"
+                                : isDone
+                                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                  : isArrived
+                                    ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                    : stop.status === "Loading Started" ||
+                                        stop.status === "Loading Done"
+                                      ? "bg-blue-500/15 text-blue-300 border-blue-500/30"
+                                      : "bg-slate-800 text-slate-300 border-slate-700"
                             }`}
                           >
-                            {formatStopStatus(
-                              stop.status,
-                              isPickup ? "Pickup" : "Drop-off",
-                            )}
+                            {isOrderRefused
+                              ? "Khách từ chối nhận"
+                              : formatStopStatus(
+                                  stop.status,
+                                  isPickup ? "Pickup" : "Drop-off",
+                                )}
                           </span>
                         </div>
                         <p className="font-semibold text-white leading-tight text-xs mt-0.5">
@@ -1482,12 +1545,13 @@ export default function DriverDashboard() {
 
             {/* Workflow Control Box */}
             <div className="bg-slate-800/90 backdrop-blur-md border border-slate-700/60 rounded-2xl p-3 mb-4 shadow-2xl">
-              <div className="mb-2.5 flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                  <Navigation2 className="w-3.5 h-3.5 text-indigo-400" /> Thao
-                  tác Chuyến xe
+              {/* Header Toolbar: Title on left, Action pills on right (1 clean row on all screen sizes, never overflows) */}
+              <div className="flex items-center justify-between gap-1 mb-3">
+                <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5 shrink-0">
+                  <Navigation2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                  <span>Thao tác chuyến xe</span>
                 </span>
-                {/* Actions: Propose Fee & Report Incident */}
+
                 {trip.status !== "Completed" && (
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
@@ -1495,10 +1559,14 @@ export default function DriverDashboard() {
                         setActiveStopTarget(currentStop);
                         setExtraFeeModalOpen(true);
                       }}
-                      className="text-[11px] font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30 transition-colors shrink-0"
+                      style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+                      className="text-[10px] font-bold text-amber-300 hover:text-amber-200 flex items-center gap-1 bg-amber-500/15 hover:bg-amber-500/25 px-2 py-1 rounded-lg border border-amber-500/35 transition-all shrink-0 active:scale-95 shadow-sm"
+                      title="Đề xuất phụ phí phát sinh"
                     >
-                      <DollarSign size={12} /> Đề xuất phí (BR-30)
+                      <DollarSign size={11} className="text-amber-400 shrink-0" />
+                      <span>Đề xuất phí</span>
                     </button>
+
                     <Link
                       href={`/driver/incidents?trip_id=${trip.id}`}
                       style={{
@@ -1508,17 +1576,20 @@ export default function DriverDashboard() {
                         textDecoration: "none",
                         display: "inline-flex",
                         alignItems: "center",
-                        gap: "5px",
-                        padding: "4px 10px",
+                        gap: "3.5px",
+                        padding: "3px 7.5px",
                         borderRadius: "8px",
-                        fontSize: "11px",
+                        fontSize: "10px",
                         fontWeight: "700",
-                        boxShadow: "0 2px 8px rgba(220, 38, 38, 0.45)",
+                        boxShadow: "0 2px 6px rgba(220, 38, 38, 0.45)",
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
                       }}
                       className="shrink-0 transition-transform active:scale-95 cursor-pointer hover:opacity-90"
+                      title="Báo cáo sự cố trên đường"
                     >
                       <AlertTriangle
-                        size={13}
+                        size={11}
                         color="#ffffff"
                         style={{ color: "#ffffff", stroke: "#ffffff" }}
                         className="shrink-0"
@@ -1678,27 +1749,58 @@ export default function DriverDashboard() {
 
                   {/* Step 2: If Arrived -> Bắt đầu bốc / dỡ (Loading Started - BR-30) */}
                   {currentStop.status === "Arrived" && (
-                    <Button
-                      type="primary"
-                      size="large"
-                      loading={actionLoading}
-                      onClick={() =>
-                        handleStartLoading(trip.id, currentStop.id)
-                      }
-                      className="w-full bg-amber-600 hover:bg-amber-500 border-none rounded-xl h-auto py-2.5 shadow-lg shadow-amber-600/30 flex items-center justify-center text-center text-white"
-                    >
-                      <div className="flex flex-col items-center justify-center w-full leading-tight">
-                        <span className="text-xs font-black flex items-center gap-1.5">
-                          <Clock size={15} /> BƯỚC 2: BẮT ĐẦU BỐC / DỠ
-                        </span>
-                        <span className="text-[10px] font-normal opacity-85">
-                          (Loading Started - BR-30)
-                        </span>
-                      </div>
-                    </Button>
+                    <div className="space-y-2">
+                      <Button
+                        type="primary"
+                        size="large"
+                        loading={actionLoading}
+                        onClick={() =>
+                          handleStartLoading(trip.id, currentStop.id)
+                        }
+                        className="w-full bg-amber-600 hover:bg-amber-500 border-none rounded-xl h-auto py-2.5 shadow-lg shadow-amber-600/30 flex items-center justify-center text-center text-white"
+                      >
+                        <div className="flex flex-col items-center justify-center w-full leading-tight">
+                          <span className="text-xs font-black flex items-center gap-1.5">
+                            <Clock size={15} /> BƯỚC 2:{" "}
+                            {isReturnWarehouseStop(currentStop)
+                              ? "BẮT ĐẦU HẠ HÀNG HOÀN VÀO KHO ALS"
+                              : "BẮT ĐẦU BỐC / DỠ"}
+                          </span>
+                          <span className="text-[10px] font-normal opacity-85">
+                            {isReturnWarehouseStop(currentStop)
+                              ? "Xác nhận bắt đầu dỡ hàng bị từ chối xuống Kho ALS"
+                              : "Xác nhận bắt đầu bốc dỡ"}
+                          </span>
+                        </div>
+                      </Button>
+
+                      {/* Nút Khách không nhận hàng ngay khi xe vừa đến điểm giao */}
+                      {isDropoffStop(currentStop) &&
+                        !isReturnWarehouseStop(currentStop) &&
+                        currentStop.order?.order_type !== "Export" && (
+                          <Button
+                            danger
+                            size="large"
+                            onClick={() => {
+                              setActiveStopTarget(currentStop);
+                              setRefusalModalOpen(true);
+                            }}
+                            className="w-full !bg-red-600/20 hover:!bg-red-600/35 !border !border-red-500/50 !text-red-200 rounded-xl h-auto py-2 flex items-center justify-center text-center"
+                          >
+                            <div className="flex flex-col items-center justify-center w-full leading-tight">
+                              <span className="text-xs font-bold flex items-center gap-1.5 text-red-300">
+                                <Ban size={14} /> KHÁCH KHÔNG NHẬN HÀNG (TỪ CHỐI NHẬN)
+                              </span>
+                              <span className="text-[10px] font-normal text-red-200/80">
+                                Báo cáo lý do & chụp ảnh để Điều phối viên điều về Kho ALS
+                              </span>
+                            </div>
+                          </Button>
+                        )}
+                    </div>
                   )}
 
-                  {/* Step 3: If Loading Started & Pickup -> Bốc hàng & Niêm chì Modal (BR-11) */}
+                  {/* Step 3: If Loading Started & Pickup -> Bốc hàng & Niêm chì Modal */}
                   {currentStop.status === "Loading Started" &&
                     isPickupStop(currentStop) && (
                       <Button
@@ -1715,36 +1817,172 @@ export default function DriverDashboard() {
                             <Camera size={15} /> BƯỚC 3: BỐC HÀNG & ẢNH CHÌ
                           </span>
                           <span className="text-[10px] font-normal opacity-85">
-                            (Record Cargo Pickup - BR-11)
+                            Chụp ảnh seal & xác nhận số lượng
                           </span>
                         </div>
                       </Button>
                     )}
 
-                  {/* Step 3: If Loading Started & Drop-off -> Giao hàng & POD Modal (BR-12) */}
+                  {/* Step 3: If Loading Started & Drop-off -> Giao hàng & POD Modal (hoặc Hạ hàng hoàn kho ALS) */}
                   {currentStop.status === "Loading Started" &&
                     isDropoffStop(currentStop) && (
-                      <Button
-                        type="primary"
-                        size="large"
-                        onClick={() => {
-                          setActiveStopTarget(currentStop);
-                          setPodModalOpen(true);
-                        }}
-                        className="w-full bg-emerald-600 hover:bg-emerald-500 border-none rounded-xl h-auto py-2.5 shadow-lg shadow-emerald-600/30 flex items-center justify-center text-center text-white"
-                      >
-                        <div className="flex flex-col items-center justify-center w-full leading-tight">
-                          <span className="text-xs font-black flex items-center gap-1.5">
-                            <Camera size={15} /> BƯỚC 3: GIAO HÀNG & POD
-                          </span>
-                          <span className="text-[10px] font-normal opacity-85">
-                            (Record Cargo Delivery & POD - BR-12)
-                          </span>
-                        </div>
-                      </Button>
+                      <div className="space-y-2">
+                        <Button
+                          type="primary"
+                          size="large"
+                          onClick={() => {
+                            setActiveStopTarget(currentStop);
+                            setPodModalOpen(true);
+                          }}
+                          className="w-full bg-emerald-600 hover:bg-emerald-500 border-none rounded-xl h-auto py-2.5 shadow-lg shadow-emerald-600/30 flex items-center justify-center text-center text-white"
+                        >
+                          <div className="flex flex-col items-center justify-center w-full leading-tight">
+                            <span className="text-xs font-black flex items-center gap-1.5">
+                              <Camera size={15} />{" "}
+                              {isReturnWarehouseStop(currentStop)
+                                ? "BƯỚC 3: HẠ HÀNG HOÀN TẠI KHO ALS & ĐÓNG ĐƠN"
+                                : "BƯỚC 3: GIAO HÀNG & POD"}
+                            </span>
+                            <span className="text-[10px] font-normal opacity-85">
+                              {isReturnWarehouseStop(currentStop)
+                                ? "Chụp ảnh hàng hạ vào kho lưu giữ ALS để đóng đơn & hoàn thành chuyến"
+                                : currentStop.order?.order_type === "Export"
+                                  ? "Đơn Xuất khẩu: Chụp ảnh cắt chì & ảnh dỡ hàng vào Kho ALS"
+                                  : "Chụp ảnh biên bản giao nhận (POD) có chữ ký & bàn giao"}
+                            </span>
+                          </div>
+                        </Button>
+
+                        {/* Nút Khách không nhận hàng ở Bước 3 */}
+                        {!isReturnWarehouseStop(currentStop) &&
+                          currentStop.order?.order_type !== "Export" && (
+                            <Button
+                              danger
+                              size="large"
+                              onClick={() => {
+                                setActiveStopTarget(currentStop);
+                                setRefusalModalOpen(true);
+                              }}
+                              className="w-full !bg-red-600/20 hover:!bg-red-600/35 !border !border-red-500/50 !text-red-200 rounded-xl h-auto py-2 flex items-center justify-center text-center"
+                            >
+                              <div className="flex flex-col items-center justify-center w-full leading-tight">
+                                <span className="text-xs font-bold flex items-center gap-1.5 text-red-300">
+                                  <Ban size={14} /> KHÁCH KHÔNG NHẬN HÀNG (TỪ CHỐI NHẬN)
+                                </span>
+                                <span className="text-[10px] font-normal text-red-200/80">
+                                  Chuyển đơn sang Delivered (Exception) & chờ điều về Kho ALS
+                                </span>
+                              </div>
+                            </Button>
+                          )}
+
+                        {/* Ghi chú nghiệp vụ rõ ràng cho Đơn Xuất khẩu tại Kho ALS */}
+                        {!isReturnWarehouseStop(currentStop) &&
+                          currentStop.order?.order_type === "Export" && (
+                            <div className="p-2.5 rounded-xl bg-blue-950/60 border border-blue-500/30 text-[11px] text-blue-200 space-y-1.5">
+                              <p className="leading-snug">
+                                💡 <b>Quy chuẩn đơn Xuất khẩu:</b> Khi xe đã hạ hàng xuống{" "}
+                                <b>Kho ALS</b>, bấm{" "}
+                                <b>&quot;BƯỚC 3: GIAO HÀNG &amp; POD&quot;</b> để hoàn tất
+                                đơn vận chuyển. Nếu hàng của khách chưa xuất khẩu được và
+                                phải nằm chờ tại kho, khách sẽ chịu phí lưu kho theo ngày
+                                tại ALS.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveStopTarget(currentStop);
+                                  setRefusalModalOpen(true);
+                                }}
+                                className="text-[10px] text-red-300 hover:text-red-200 underline font-semibold cursor-pointer"
+                              >
+                                Trường hợp đặc biệt: Kho đích từ chối không cho hạ hàng xuống kho → Báo ngoại lệ
+                              </button>
+                            </div>
+                          )}
+                      </div>
                     )}
 
-                  {/* Step 4: If Loading Done -> Rời khỏi điểm dừng (Left - BR-36) */}
+                  {/* Trạng thái chờ Điều phối viên điều về Kho ALS sau khi báo Khách từ chối nhận hàng */}
+                  {currentStop.status === "Done" &&
+                    stops.every((s) => s.status === "Done") && (
+                      <div className="p-3.5 bg-red-500/15 border border-red-500/40 rounded-2xl space-y-2.5 text-xs">
+                        <div className="flex items-start gap-2.5">
+                          <Ban className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <p className="font-bold text-red-200 text-xs">
+                              Đã báo cáo Khách từ chối nhận hàng (Delivered - Exception)
+                            </p>
+                            <p className="text-[11px] text-slate-300 leading-relaxed">
+                              Hệ thống đã gửi cảnh báo tới Điều phối viên để chỉ định{" "}
+                              <b>Kho ALS</b> nhận hàng hoàn trả. Khi Điều phối viên bấm{" "}
+                              <b>&quot;Điều về kho ALS&quot;</b>, điểm dừng Kho ALS mới sẽ xuất hiện
+                              ngay bên dưới để bạn hạ hàng và đóng đơn.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                          <Button
+                            type="primary"
+                            loading={actionLoading}
+                            onClick={fetchDashboardData}
+                            className="flex-1 bg-blue-600 hover:bg-blue-500 border-none font-bold rounded-xl text-xs h-9"
+                          >
+                            Làm mới kiểm tra lộ trình
+                          </Button>
+                          {(() => {
+                            const refusedStop = stops.find(
+                              (s) =>
+                                s.order_id &&
+                                String(s.order?.status || "")
+                                  .toUpperCase()
+                                  .replace(/[^A-Z0-9]+/g, "_") ===
+                                  "DELIVERED_EXCEPTION" &&
+                                !s.order?.is_closed,
+                            );
+                            const targetOrderId =
+                              refusedStop?.order_id || currentStop?.order_id;
+                            if (!targetOrderId) return null;
+                            return (
+                              <Button
+                                loading={actionLoading}
+                                onClick={async () => {
+                                  try {
+                                    setActionLoading(true);
+                                    const res =
+                                      await orderApi.redirectToAlsWarehouse(
+                                        targetOrderId,
+                                        {
+                                          warehouse_name:
+                                            "Nhà Ga Hàng Hóa ALS Nội Bài (ALSC)",
+                                          close_immediately: false,
+                                        },
+                                      );
+                                    message.success(
+                                      res.message ||
+                                        "Đã nhận điểm dừng hoàn hàng về Kho ALS Nội Bài!",
+                                    );
+                                    await fetchDashboardData();
+                                  } catch (e) {
+                                    message.error(
+                                      e.message ||
+                                        "Không thể nhận điểm hoàn kho ALS",
+                                    );
+                                  } finally {
+                                    setActionLoading(false);
+                                  }
+                                }}
+                                className="flex-1 !bg-amber-600 hover:!bg-amber-500 !text-white !border-none font-bold rounded-xl text-xs h-9"
+                              >
+                                Hoàn về Kho ALS Nội Bài ngay
+                              </Button>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
+                  {/* Step 4: If Loading Done -> Rời khỏi điểm dừng (Left) */}
                   {currentStop.status === "Loading Done" && (
                     <Button
                       type="primary"
@@ -1774,8 +2012,7 @@ export default function DriverDashboard() {
                     Chúc mừng! Bạn đã hoàn thành toàn bộ chuyến xe.
                   </p>
                   <p className="text-xs text-slate-400 mt-1">
-                    Xe và hồ sơ tài xế đã được giải phóng về trạng thái sẵn sàng
-                    (BR-24).
+                    Xe và hồ sơ tài xế đã được giải phóng về trạng thái sẵn sàng.
                   </p>
                   <Button
                     type="primary"

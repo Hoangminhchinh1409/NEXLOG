@@ -42,16 +42,21 @@ function AnimatedCounter({ value, suffix = '', prefix = '', duration = 750 }) {
   return <span>{prefix}{displayValue.toLocaleString('vi-VN')}{suffix}</span>;
 }
 
+const MANAGER_SWF_TTL_MS = 15000;
+const managerDashboardCache = new Map();
+
 export default function ManagerDashboard() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const initialCache = managerDashboardCache.get('2026-10');
+  const [loading, setLoading] = useState(!initialCache);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(dayjs('2026-10-01'));
   const [period, setPeriod] = useState('2026-10');
   const [displayPeriod, setDisplayPeriod] = useState('Tháng 10/2026');
   const [activeTab, setActiveTab] = useState('OVERVIEW'); // 'OVERVIEW' (Screen 16), 'DRIVERS' (Screen 41)
 
   // 1. Dashboard State — Cấu trúc chuẩn Hybrid BI (Screen 16)
-  const [dashboardData, setDashboardData] = useState({
+  const [dashboardData, setDashboardData] = useState(() => initialCache?.dashboardData || {
     period: '2026-10',
     kpiCards: {
       revenueVnd: 482500000,
@@ -99,20 +104,39 @@ export default function ManagerDashboard() {
   });
 
   // 2. Driver Performance State (Screen 41)
-  const [driversPerformance, setDriversPerformance] = useState([]);
-  const [driverSummary, setDriverSummary] = useState({ total_drivers: 0, total_completed_trips: 0 });
+  const [driversPerformance, setDriversPerformance] = useState(
+    () => initialCache?.driversPerformance || []
+  );
+  const [driverSummary, setDriverSummary] = useState(
+    () => initialCache?.driverSummary || { total_drivers: 0, total_completed_trips: 0 }
+  );
   const [driverSearch, setDriverSearch] = useState('');
   const [selectedDriverModal, setSelectedDriverModal] = useState(null);
 
-  // Hàm load dữ liệu API
-  const loadData = React.useCallback(async (queryPeriod = period) => {
-    setLoading(true);
+  // Hàm load dữ liệu API (stale-while-revalidate theo kỳ)
+  const loadData = React.useCallback(async (queryPeriod = period, { refresh = false } = {}) => {
+    const cacheKey = String(queryPeriod || 'ALL');
+    const cached = managerDashboardCache.get(cacheKey);
+    if (!refresh && cached) {
+      setDashboardData(cached.dashboardData);
+      setDriversPerformance(cached.driversPerformance);
+      setDriverSummary(cached.driverSummary);
+      setLoading(false);
+      if (Date.now() - cached.updatedAt < MANAGER_SWF_TTL_MS) {
+        return;
+      }
+    } else if (!cached) {
+      setLoading(true);
+    }
+    if (refresh) setRefreshing(true);
+
     try {
       const [statsRes, driversRes] = await Promise.all([
-        managerApi.getDashboardStats(queryPeriod).catch(() => null),
-        managerApi.getDriverPerformance(queryPeriod).catch(() => ({ drivers: [], summary: {} }))
+        managerApi.getDashboardStats(queryPeriod, { refresh }).catch(() => null),
+        managerApi.getDriverPerformance(queryPeriod, { refresh }).catch(() => ({ drivers: [], summary: {} }))
       ]);
 
+      let nextDashboardData = cached?.dashboardData || null;
       if (statsRes) {
         // Tương thích cả format mới phân cụm và format cũ
         const kpiCards = statsRes.kpiCards || {
@@ -134,7 +158,7 @@ export default function ManagerDashboard() {
           emptyRunningPercent: Number(statsRes.stats?.emptyRunningRate || statsRes.emptyRunningRate || 0)
         };
 
-        setDashboardData({
+        nextDashboardData = {
           period: statsRes.period || queryPeriod,
           kpiCards,
           fleetGauges,
@@ -142,18 +166,34 @@ export default function ManagerDashboard() {
           lateStopsByCauseChart: Array.isArray(statsRes.lateStopsByCauseChart) ? statsRes.lateStopsByCauseChart : [],
           incidentsByTypeChart: Array.isArray(statsRes.incidentsByTypeChart) ? statsRes.incidentsByTypeChart : [],
           revenueTrendChart: Array.isArray(statsRes.revenueTrendChart) ? statsRes.revenueTrendChart : []
-        });
+        };
+        setDashboardData(nextDashboardData);
       }
 
+      const nextDrivers = driversRes ? (driversRes.drivers || []) : (cached?.driversPerformance || []);
+      const nextSummary = driversRes
+        ? (driversRes.summary || { total_drivers: 0, total_completed_trips: 0 })
+        : (cached?.driverSummary || { total_drivers: 0, total_completed_trips: 0 });
+
       if (driversRes) {
-        setDriversPerformance(driversRes.drivers || []);
-        setDriverSummary(driversRes.summary || { total_drivers: 0, total_completed_trips: 0 });
+        setDriversPerformance(nextDrivers);
+        setDriverSummary(nextSummary);
+      }
+
+      if (nextDashboardData) {
+        managerDashboardCache.set(cacheKey, {
+          dashboardData: nextDashboardData,
+          driversPerformance: nextDrivers,
+          driverSummary: nextSummary,
+          updatedAt: Date.now()
+        });
       }
     } catch (error) {
       console.error('Lỗi khi tải dữ liệu dashboard:', error);
       message.error('Không thể tải số liệu hiệu suất từ máy chủ.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [period]);
 
@@ -569,13 +609,14 @@ export default function ManagerDashboard() {
           </div>
 
           <button
-            onClick={() => loadData(period)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-surface-container-low text-primary text-xs font-bold hover:bg-surface-container transition-colors cursor-pointer"
+            onClick={() => loadData(period, { refresh: true })}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-surface-container-low text-primary text-xs font-bold hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-60"
             type="button"
             title="Làm mới dữ liệu từ Database"
           >
-            <span className="material-symbols-outlined text-[16px]">refresh</span>
-            <span>Làm mới</span>
+            <span className={`material-symbols-outlined text-[16px] ${refreshing ? 'animate-spin' : ''}`}>refresh</span>
+            <span>{refreshing ? 'Đang tải...' : 'Làm mới'}</span>
           </button>
 
           <button
@@ -649,7 +690,7 @@ export default function ManagerDashboard() {
                         {dashboardData.kpiCards.revenueFormatted}
                       </div>
                       <div className="text-[11px] text-on-surface-variant mt-0.5 font-medium">
-                        Chưa gồm tiền thu hộ (BR-30)
+                        Chưa gồm tiền thu hộ
                       </div>
                     </div>
                     <div className="w-full bg-surface-container h-1 rounded-full overflow-hidden">
@@ -1074,7 +1115,6 @@ export default function ManagerDashboard() {
                     <th className="py-3 px-4 text-center">Giờ lái (GPS)</th>
                     <th className="py-3 px-4 text-center">Chạm giới hạn lái</th>
                     <th className="py-3 px-4 text-center">Quá tốc độ</th>
-                    <th className="py-3 px-4 text-center">Ngoài bán kính</th>
                     <th className="py-3 px-4 text-center">Ở điểm (TB)</th>
                     <th className="py-3 px-4 text-center">Sự cố · khiếu nại</th>
                   </tr>
@@ -1131,18 +1171,6 @@ export default function ManagerDashboard() {
                           <span className="inline-block px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 font-extrabold">
                             {d.speeding_count}
                           </span>
-                        ) : (
-                          <span className="text-on-surface-variant">0</span>
-                        )}
-                      </td>
-
-                      <td className="py-3.5 px-4 text-center">
-                        {d.outside_radius_count > 0 ? (
-                          <Tooltip title="Check-in/Check-out ngoài bán kính Geofence hợp lệ">
-                            <span className="inline-block px-2 py-0.5 rounded-full bg-error/10 text-error font-extrabold">
-                              {d.outside_radius_count}
-                            </span>
-                          </Tooltip>
                         ) : (
                           <span className="text-on-surface-variant">0</span>
                         )}

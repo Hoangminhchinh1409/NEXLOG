@@ -1,6 +1,36 @@
 import React from 'react';
-import { Modal, Upload, Input, InputNumber, Checkbox, Select, Button } from 'antd';
+import { Modal, Upload, Input, InputNumber, Checkbox, Select, Button, App } from 'antd';
 import { Camera, Ban, DollarSign, FileText } from 'lucide-react';
+import { uploadApi } from '../../../api/uploadApi';
+
+const buildPhotoUploadProps = ({ value, setter, folder, name, uid, messageApi }) => ({
+  listType: 'picture-card',
+  maxCount: 1,
+  accept: 'image/*',
+  fileList: value ? [{ uid, name, status: 'done', url: value }] : [],
+  customRequest: async ({ file, onSuccess, onError }) => {
+    try {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        const dataUrl = await uploadApi.fileToDataUrl(file);
+        setter(dataUrl);
+        onSuccess?.({ url: dataUrl });
+        messageApi?.info('Đã lưu ảnh tạm ngoại tuyến, sẽ đẩy lên Cloudinary khi đồng bộ.');
+        return;
+      }
+      const uploaded = await uploadApi.uploadToCloudinary(file, folder);
+      setter(uploaded.url);
+      onSuccess?.({ url: uploaded.url });
+      messageApi?.success('Đã tải ảnh lên Cloudinary thành công.');
+    } catch (err) {
+      messageApi?.error(err.message || 'Lỗi tải ảnh lên Cloudinary');
+      onError?.(err);
+    }
+  },
+  onRemove: () => {
+    setter('');
+    return true;
+  }
+});
 
 const darkModalStyles = {
   content: {
@@ -87,6 +117,7 @@ export default function DriverDashboardModals({
   docsModalOpen,
   setDocsModalOpen
 }) {
+  const { message } = App.useApp();
   return (
     <>
       {/* MODAL 0: XÁC NHẬN NHẬN CHUYẾN */}
@@ -132,58 +163,64 @@ export default function DriverDashboardModals({
           <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="font-bold text-slate-200 block mb-1">1. Hàng trước bốc (*)</label>
-              <Upload 
-                listType="picture-card" 
-                maxCount={1} 
-                beforeUpload={() => false}
-                defaultFileList={[{ uid: "-1", name: "cargo.jpg", status: "done", url: cargoPhotoUrl }]}
-                onChange={(i) => {
-                  const f = i.fileList[0];
-                  if (f) setCargoPhotoUrl(f.thumbUrl || f.url || cargoPhotoUrl);
-                }}
+              <Upload
+                {...buildPhotoUploadProps({
+                  value: cargoPhotoUrl,
+                  setter: setCargoPhotoUrl,
+                  folder: 'nexlog/driver/pickup',
+                  name: 'cargo.jpg',
+                  uid: '-1',
+                  messageApi: message
+                })}
               >
-                <div className="flex flex-col items-center text-slate-400">
-                  <Camera size={16}/>
-                  <span className="text-[10px]">Trước bốc</span>
-                </div>
+                {!cargoPhotoUrl && (
+                  <div className="flex flex-col items-center text-slate-400">
+                    <Camera size={16}/>
+                    <span className="text-[10px]">Trước bốc</span>
+                  </div>
+                )}
               </Upload>
             </div>
 
             <div>
               <label className="font-bold text-slate-200 block mb-1">2. Hàng trên xe (*)</label>
-              <Upload 
-                listType="picture-card" 
-                maxCount={1} 
-                beforeUpload={() => false}
-                defaultFileList={[{ uid: "-2", name: "loaded.jpg", status: "done", url: loadedCargoPhotoUrl }]}
-                onChange={(i) => {
-                  const f = i.fileList[0];
-                  if (f) setLoadedCargoPhotoUrl(f.thumbUrl || f.url || loadedCargoPhotoUrl);
-                }}
+              <Upload
+                {...buildPhotoUploadProps({
+                  value: loadedCargoPhotoUrl,
+                  setter: setLoadedCargoPhotoUrl,
+                  folder: 'nexlog/driver/pickup',
+                  name: 'loaded.jpg',
+                  uid: '-2',
+                  messageApi: message
+                })}
               >
-                <div className="flex flex-col items-center text-slate-400">
-                  <Camera size={16}/>
-                  <span className="text-[10px]">Trong thùng</span>
-                </div>
+                {!loadedCargoPhotoUrl && (
+                  <div className="flex flex-col items-center text-slate-400">
+                    <Camera size={16}/>
+                    <span className="text-[10px]">Trong thùng</span>
+                  </div>
+                )}
               </Upload>
             </div>
 
             <div>
               <label className="font-bold text-slate-200 block mb-1">3. Chì & Biển số (*)</label>
-              <Upload 
-                listType="picture-card" 
-                maxCount={1} 
-                beforeUpload={() => false}
-                defaultFileList={[{ uid: "-3", name: "seal.jpg", status: "done", url: sealPhotoUrl }]}
-                onChange={(i) => {
-                  const f = i.fileList[0];
-                  if (f) setSealPhotoUrl(f.thumbUrl || f.url || sealPhotoUrl);
-                }}
+              <Upload
+                {...buildPhotoUploadProps({
+                  value: sealPhotoUrl,
+                  setter: setSealPhotoUrl,
+                  folder: 'nexlog/driver/pickup',
+                  name: 'seal.jpg',
+                  uid: '-3',
+                  messageApi: message
+                })}
               >
-                <div className="flex flex-col items-center text-slate-400">
-                  <Camera size={16}/>
-                  <span className="text-[10px]">Chì & biển</span>
-                </div>
+                {!sealPhotoUrl && (
+                  <div className="flex flex-col items-center text-slate-400">
+                    <Camera size={16}/>
+                    <span className="text-[10px]">Chì & biển</span>
+                  </div>
+                )}
               </Upload>
             </div>
           </div>
@@ -226,113 +263,216 @@ export default function DriverDashboardModals({
         </div>
       </Modal>
 
-      {/* MODAL 2: GIAO HÀNG & BIÊN BẢN POD */}
-      <Modal
-        centered 
-        open={podModalOpen} 
-        onCancel={() => setPodModalOpen(false)} 
-        title={<span className="font-bold text-white">Biên bản Giao nhận Hàng POD</span>}
-        styles={darkModalStyles} 
-        okText="Lưu giao hàng"
-        confirmLoading={actionLoading}
-        okButtonProps={{ className: "!bg-emerald-600 hover:!bg-emerald-500 !border-none !rounded-xl !font-bold" }}
-        cancelButtonProps={{ className: "!rounded-xl" }}
-        onOk={handleSubmitDelivery}
-      >
-        <div className="space-y-3 py-2 text-xs">
-          {activeStopTarget?.order?.order_type === "Export" ? (
-            <div>
-              <p className="text-blue-400 font-bold mb-2">Đơn hàng Xuất Khẩu: Chụp ảnh cắt chì & ảnh dỡ hàng</p>
-              <div className="grid grid-cols-2 gap-2">
+      {/* MODAL 2: GIAO HÀNG & BIÊN BẢN POD (HOẶC HẠ HÀNG HOÀN TẠI KHO ALS) */}
+      {(() => {
+        const rawStopType = String(
+          activeStopTarget?.raw_stop_type || activeStopTarget?.stop_type || ''
+        )
+          .trim()
+          .toUpperCase();
+        const isReturnToAls =
+          rawStopType === 'RETURN' ||
+          rawStopType === 'RETURN_TO_WAREHOUSE' ||
+          rawStopType === 'HOÀN KHO';
+
+        return (
+          <Modal
+            centered
+            open={podModalOpen}
+            onCancel={() => setPodModalOpen(false)}
+            title={
+              <span className="font-bold text-white">
+                {isReturnToAls
+                  ? 'Hạ hàng hoàn tại Kho ALS & Đóng đơn'
+                  : 'Biên bản Giao nhận Hàng POD'}
+              </span>
+            }
+            styles={darkModalStyles}
+            okText={
+              isReturnToAls
+                ? 'Xác nhận hạ kho ALS & Đóng đơn'
+                : 'Lưu giao hàng'
+            }
+            confirmLoading={actionLoading}
+            okButtonProps={{
+              className:
+                '!bg-emerald-600 hover:!bg-emerald-500 !border-none !rounded-xl !font-bold'
+            }}
+            cancelButtonProps={{ className: '!rounded-xl' }}
+            onOk={handleSubmitDelivery}
+          >
+            <div className="space-y-3 py-2 text-xs">
+              {isReturnToAls ? (
+                <div className="space-y-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200">
+                    <p className="font-bold text-amber-300 mb-0.5">
+                      Điểm hạ hàng hoàn lưu giữ tại Kho ALS
+                    </p>
+                    <p className="text-[11px] text-amber-100/90">
+                      Kho tiếp nhận:{' '}
+                      <b>
+                        {activeStopTarget?.location?.name ||
+                          activeStopTarget?.location?.address ||
+                          'Kho ALS'}
+                      </b>
+                      . Sau khi chụp ảnh xác nhận dỡ hàng vào kho, đơn hàng sẽ
+                      được đóng và hoàn tất chuyến xe.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-200 block mb-1">
+                      Ảnh hàng hóa đã dỡ vào Kho ALS lưu giữ (*)
+                    </label>
+                    <Upload
+                      {...buildPhotoUploadProps({
+                        value: unloadedCargoPhotoUrl || podPhotoUrl,
+                        setter: (val) => {
+                          setUnloadedCargoPhotoUrl(val);
+                          setPodPhotoUrl(val);
+                        },
+                        folder: 'nexlog/driver/return_warehouse',
+                        name: 'als_warehouse_unload.jpg',
+                        uid: '-1',
+                        messageApi: message
+                      })}
+                    >
+                      {!(unloadedCargoPhotoUrl || podPhotoUrl) && (
+                        <div className="flex flex-col items-center text-slate-400">
+                          <Camera size={16} />
+                          <span className="text-[10px]">Ảnh hạ kho ALS</span>
+                        </div>
+                      )}
+                    </Upload>
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-200 block mb-1">
+                      Thủ kho ALS tiếp nhận / Ghi chú (Tùy chọn)
+                    </label>
+                    <Input
+                      value={receiverName}
+                      onChange={(e) => setReceiverName(e.target.value)}
+                      placeholder="VD: Thủ kho ALS Nội Bài - Đã nhập kho lưu giữ"
+                      className="py-1.5"
+                    />
+                  </div>
+                </div>
+              ) : activeStopTarget?.order?.order_type === 'Export' ? (
                 <div>
-                  <label className="font-bold text-slate-200 block mb-1">Ảnh cắt chì (*)</label>
-                  <Upload 
-                    listType="picture-card" 
-                    maxCount={1} 
-                    beforeUpload={() => false}
-                    defaultFileList={[{ uid: "-1", name: "cut.jpg", status: "done", url: cutSealPhotoUrl }]}
-                    onChange={(i) => {
-                      const f = i.fileList[0];
-                      if (f) setCutSealPhotoUrl(f.thumbUrl || f.url || cutSealPhotoUrl);
-                    }}
-                  >
-                    <div className="flex flex-col items-center text-slate-400">
-                      <Camera size={16}/>
-                      <span className="text-[10px]">Cắt chì</span>
+                  <p className="text-blue-400 font-bold mb-2">
+                    Đơn hàng Xuất Khẩu: Chụp ảnh cắt chì &amp; ảnh dỡ hàng vào Kho ALS
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="font-bold text-slate-200 block mb-1">
+                        Ảnh cắt chì (*)
+                      </label>
+                      <Upload
+                        {...buildPhotoUploadProps({
+                          value: cutSealPhotoUrl,
+                          setter: setCutSealPhotoUrl,
+                          folder: 'nexlog/driver/delivery',
+                          name: 'cut.jpg',
+                          uid: '-1',
+                          messageApi: message
+                        })}
+                      >
+                        {!cutSealPhotoUrl && (
+                          <div className="flex flex-col items-center text-slate-400">
+                            <Camera size={16} />
+                            <span className="text-[10px]">Cắt chì</span>
+                          </div>
+                        )}
+                      </Upload>
                     </div>
-                  </Upload>
+                    <div>
+                      <label className="font-bold text-slate-200 block mb-1">
+                        Ảnh dỡ hàng (*)
+                      </label>
+                      <Upload
+                        {...buildPhotoUploadProps({
+                          value: unloadedCargoPhotoUrl,
+                          setter: setUnloadedCargoPhotoUrl,
+                          folder: 'nexlog/driver/delivery',
+                          name: 'unloaded.jpg',
+                          uid: '-2',
+                          messageApi: message
+                        })}
+                      >
+                        {!unloadedCargoPhotoUrl && (
+                          <div className="flex flex-col items-center text-slate-400">
+                            <Camera size={16} />
+                            <span className="text-[10px]">Dỡ hàng</span>
+                          </div>
+                        )}
+                      </Upload>
+                    </div>
+                  </div>
                 </div>
+              ) : (
                 <div>
-                  <label className="font-bold text-slate-200 block mb-1">Ảnh dỡ hàng (*)</label>
-                  <Upload 
-                    listType="picture-card" 
-                    maxCount={1} 
-                    beforeUpload={() => false}
-                    defaultFileList={[{ uid: "-2", name: "unloaded.jpg", status: "done", url: unloadedCargoPhotoUrl }]}
-                    onChange={(i) => {
-                      const f = i.fileList[0];
-                      if (f) setUnloadedCargoPhotoUrl(f.thumbUrl || f.url || unloadedCargoPhotoUrl);
-                    }}
+                  <label className="font-bold text-slate-200 block mb-1">
+                    Ảnh biên bản POD có ký nhận (*)
+                  </label>
+                  <Upload
+                    {...buildPhotoUploadProps({
+                      value: podPhotoUrl,
+                      setter: setPodPhotoUrl,
+                      folder: 'nexlog/driver/delivery',
+                      name: 'pod.jpg',
+                      uid: '-1',
+                      messageApi: message
+                    })}
                   >
-                    <div className="flex flex-col items-center text-slate-400">
-                      <Camera size={16}/>
-                      <span className="text-[10px]">Dỡ hàng</span>
-                    </div>
+                    {!podPhotoUrl && (
+                      <div className="flex flex-col items-center text-slate-400">
+                        <Camera size={16} />
+                        <span className="text-[10px]">Chụp POD</span>
+                      </div>
+                    )}
                   </Upload>
+                  <div>
+                    <label className="font-bold text-slate-200 block mb-1 mt-2">
+                      Họ tên người nhận hàng (*)
+                    </label>
+                    <Input
+                      value={receiverName}
+                      onChange={(e) => setReceiverName(e.target.value)}
+                      placeholder="VD: Nguyễn Văn C"
+                      className="py-1.5"
+                    />
+                  </div>
                 </div>
-              </div>
-            </div>
-          ): (
-            <div>
-              <label className="font-bold text-slate-200 block mb-1">Ảnh biên bản POD có ký nhận (*)</label>
-              <Upload 
-                listType="picture-card" 
-                maxCount={1} 
-                beforeUpload={() => false}
-                defaultFileList={[{ uid: "-1", name: "pod.jpg", status: "done", url: podPhotoUrl }]}
-                onChange={(i) => {
-                  const f = i.fileList[0];
-                  if (f) setPodPhotoUrl(f.thumbUrl || f.url || podPhotoUrl);
-                }}
-              >
-                <div className="flex flex-col items-center text-slate-400">
-                  <Camera size={16}/>
-                  <span className="text-[10px]">Chụp POD</span>
-                </div>
-              </Upload>
+              )}
+
               <div>
-                <label className="font-bold text-slate-200 block mb-1 mt-2">Họ tên người nhận hàng (*)</label>
-                <Input 
-                  value={receiverName} 
-                  onChange={(e) => setReceiverName(e.target.value)} 
-                  placeholder="VD: Nguyễn Văn C" 
-                  className="py-1.5"
+                <label className="font-bold text-slate-200 block mb-1">
+                  {isReturnToAls
+                    ? 'Số kiện hạ kho ALS thực tế'
+                    : 'Số kiện đã giao thực tế'}
+                </label>
+                <InputNumber
+                  min={1}
+                  value={deliveredPackages}
+                  onChange={setDeliveredPackages}
+                  className="w-full"
                 />
               </div>
+
+              {!isReturnToAls && (
+                <div className="pt-1">
+                  <Checkbox
+                    checked={docsHandedOver}
+                    onChange={(e) => setDocsHandedOver(e.target.checked)}
+                    className="font-bold text-slate-200"
+                  >
+                    Đã bàn giao đủ chứng từ
+                  </Checkbox>
+                </div>
+              )}
             </div>
-          )}
-
-          <div>
-            <label className="font-bold text-slate-200 block mb-1">Số kiện đã giao thực tế</label>
-            <InputNumber 
-              min={1} 
-              value={deliveredPackages} 
-              onChange={setDeliveredPackages} 
-              className="w-full"
-            />
-          </div>
-
-          <div className="pt-1">
-            <Checkbox 
-              checked={docsHandedOver} 
-              onChange={(e) => setDocsHandedOver(e.target.checked)}
-              className="font-bold text-slate-200"
-            >
-              Đã bàn giao đủ chứng từ
-            </Checkbox>
-          </div>
-        </div>
-      </Modal>
+          </Modal>
+        );
+      })()}
 
       {/* MODAL 3: KHÁCH KHÔNG NHẬN HÀNG */}
       <Modal
@@ -364,20 +504,22 @@ export default function DriverDashboardModals({
 
           <div>
             <label className="font-bold text-slate-200 block mb-1">Ảnh hiện trường hàng hóa (*) (Bắt buộc)</label>
-            <Upload 
-              listType="picture-card" 
-              maxCount={1} 
-              beforeUpload={() => false}
-              defaultFileList={[{ uid: "-1", name: "refusal.jpg", status: "done", url: refusalCargoPhoto }]}
-              onChange={(i) => {
-                const f = i.fileList[0];
-                if (f) setRefusalCargoPhoto(f.thumbUrl || f.url || refusalCargoPhoto);
-              }}
+            <Upload
+              {...buildPhotoUploadProps({
+                value: refusalCargoPhoto,
+                setter: setRefusalCargoPhoto,
+                folder: 'nexlog/driver/refusal',
+                name: 'refusal.jpg',
+                uid: '-1',
+                messageApi: message
+              })}
             >
-              <div className="flex flex-col items-center text-slate-400">
-                <Camera size={16}/>
-                <span className="text-[10px]">Ảnh hàng</span>
-              </div>
+              {!refusalCargoPhoto && (
+                <div className="flex flex-col items-center text-slate-400">
+                  <Camera size={16}/>
+                  <span className="text-[10px]">Ảnh hàng</span>
+                </div>
+              )}
             </Upload>
           </div>
 
@@ -448,20 +590,22 @@ export default function DriverDashboardModals({
 
           <div>
             <label className="font-bold text-slate-200 block mb-1">Ảnh chứng từ / Biên lai (*) (Bắt buộc)</label>
-            <Upload 
-              listType="picture-card" 
-              maxCount={1} 
-              beforeUpload={() => false}
-              defaultFileList={[{ uid: "-1", name: "receipt.jpg", status: "done", url: feePhotoUrl }]}
-              onChange={(i) => {
-                const f = i.fileList[0];
-                if (f) setFeePhotoUrl(f.thumbUrl || f.url || feePhotoUrl);
-              }}
+            <Upload
+              {...buildPhotoUploadProps({
+                value: feePhotoUrl,
+                setter: setFeePhotoUrl,
+                folder: 'nexlog/driver/extra-fees',
+                name: 'receipt.jpg',
+                uid: '-1',
+                messageApi: message
+              })}
             >
-              <div className="flex flex-col items-center text-slate-400">
-                <Camera size={16}/>
-                <span className="text-[10px]">Chứng từ</span>
-              </div>
+              {!feePhotoUrl && (
+                <div className="flex flex-col items-center text-slate-400">
+                  <Camera size={16}/>
+                  <span className="text-[10px]">Chứng từ</span>
+                </div>
+              )}
             </Upload>
           </div>
         </div>
