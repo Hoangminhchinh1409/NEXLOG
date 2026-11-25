@@ -1,11 +1,12 @@
-import { fetchWithoutAuth } from './apiClient';
+import { fetchWithAuth, fetchWithoutAuth } from './apiClient';
+import { API_URL } from './apiConfig';
 
 export const orderApi = {
   // 1. Lấy danh sách toàn bộ đơn hàng từ Backend Supabase (hỗ trợ lọc theo dispatcher_id)
   getAllOrders: async (params = {}) => {
     try {
       const queryStr = params?.dispatcher_id ? `?dispatcher_id=${params.dispatcher_id}` : '';
-      const data = await fetchWithoutAuth(`/orders${queryStr}`);
+      const data = await fetchWithAuth(`/orders${queryStr}`);
       return data.orders || [];
     } catch (error) {
       console.error('orderApi.getAllOrders Error:', error);
@@ -30,7 +31,7 @@ export const orderApi = {
   // 3. Điều phối viên tạo đơn trực tiếp
   createDirectOrder: async (orderData) => {
     try {
-      const data = await fetchWithoutAuth('/orders', {
+      const data = await fetchWithAuth('/orders', {
         method: 'POST',
         body: JSON.stringify(orderData)
       });
@@ -179,6 +180,34 @@ export const orderApi = {
     }
   },
 
+  // 11a. Khách hàng: Gửi yêu cầu bồi thường thiệt hại hàng hóa từ Tracking Page (BR-59)
+  submitGuestClaim: async (token, payload) => {
+    try {
+      const data = await fetchWithoutAuth(`/orders/customer-claim/${encodeURIComponent(token)}`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      return data;
+    } catch (error) {
+      console.error('orderApi.submitGuestClaim Error:', error);
+      throw error;
+    }
+  },
+
+  // 11b. Khách hàng: Xác nhận đã nhận tiền bồi thường trên Tracking Page (BF-04)
+  confirmGuestClaimPayment: async (token, claimId) => {
+    try {
+      const data = await fetchWithoutAuth(`/orders/customer-confirm-claim/${encodeURIComponent(token)}`, {
+        method: 'POST',
+        body: JSON.stringify({ claim_id: claimId })
+      });
+      return data;
+    } catch (error) {
+      console.error('orderApi.confirmGuestClaimPayment Error:', error);
+      throw error;
+    }
+  },
+
   // 11b. Điều phối viên: Từ chối 1 chứng từ & tự động gửi email yêu cầu khách tải lại
   rejectOrderDocument: async (orderId, { doc_key, reject_reason, documents }) => {
     try {
@@ -301,5 +330,24 @@ export const orderApi = {
     } catch (error) {
       return [];
     }
+  },
+
+  // 18. Khách hàng: Lấy mã Captcha tra cứu hóa đơn (Public)
+  getPublicInvoiceCaptcha: async () => {
+    return fetchWithoutAuth('/orders/public-invoice-captcha');
+  },
+
+  // 19. Khách hàng: Tra cứu hóa đơn điện tử công khai (Public)
+  lookupPublicInvoice: async (payload) => {
+    return fetchWithoutAuth('/orders/public-invoice-lookup', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // 20. Khách hàng: Tạo URL tải / xem file PDF hoặc XML hóa đơn (Public)
+  getPublicInvoiceFileUrl: (downloadToken, format = 'pdf') => {
+    const safeFormat = format === 'xml' ? 'xml' : 'pdf';
+    return `${API_URL}/orders/public-invoice-file/${encodeURIComponent(downloadToken)}?format=${safeFormat}`;
   }
 };

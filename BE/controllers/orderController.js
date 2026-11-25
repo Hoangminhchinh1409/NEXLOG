@@ -16,7 +16,12 @@ const {
 
 const {
   getAllOrders,
-  getOrderByToken
+  getOrderByToken,
+  submitGuestClaimByToken,
+  confirmGuestClaimPayment,
+  getPublicInvoiceCaptcha,
+  lookupPublicInvoice,
+  downloadPublicInvoiceFile
 } = require('./order/orderQueryController');
 
 const {
@@ -55,6 +60,11 @@ module.exports = {
   // Query
   getAllOrders,
   getOrderByToken,
+  submitGuestClaimByToken,
+  confirmGuestClaimPayment,
+  getPublicInvoiceCaptcha,
+  lookupPublicInvoice,
+  downloadPublicInvoiceFile,
 
   // Creation
   createConsultationOrder,

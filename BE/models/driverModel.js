@@ -46,13 +46,18 @@ const mapProfileRow = (row) => {
 const mapTripStopRow = (s) => {
   const ss = serializePrisma(s);
   const { locations: locObj, orders: ordObj, ...rest } = ss;
-  const orderCargos = ordObj?.order_cargos ? { ...ordObj.order_cargos } : null;
+  const orderCargos = Array.isArray(ordObj?.order_cargos)
+    ? ordObj.order_cargos
+    : ordObj?.order_cargos
+      ? [ordObj.order_cargos]
+      : [];
   let mappedOrder = null;
   if (ordObj) {
     const { order_cargos: _omit, ...ordRest } = ordObj;
     mappedOrder = {
       ...ordRest,
-      cargos: orderCargos,
+      cargos: orderCargos[0] || null,
+      order_cargos: orderCargos,
     };
   }
   return {
@@ -669,6 +674,20 @@ const createIncident = async ({
       reported_time: now,
       created_at: now,
       updated_at: now,
+    },
+    select: {
+      id: true,
+      trip_id: true,
+      trip_stop_id: true,
+      type: true,
+      description: true,
+      photos: true,
+      fault: true,
+      status: true,
+      reported_by: true,
+      reported_time: true,
+      created_at: true,
+      updated_at: true,
     },
   });
   return {

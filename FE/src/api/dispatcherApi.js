@@ -262,6 +262,52 @@ export const dispatcherApi = {
     }
   },
 
+  createClaim: async (claimData) => {
+    try {
+      const data = await fetchWithAuth('/claims', {
+        method: 'POST',
+        body: JSON.stringify(claimData)
+      });
+      return data;
+    } catch (error) {
+      console.error('dispatcherApi.createClaim error:', error);
+      throw error;
+    }
+  },
+
+  getClaims: async () => {
+    try {
+      const data = await fetchWithAuth('/claims');
+      return data;
+    } catch (error) {
+      console.error('dispatcherApi.getClaims error:', error);
+      throw error;
+    }
+  },
+
+  getClaimById: async (id) => {
+    try {
+      const data = await fetchWithAuth(`/claims/${id}`);
+      return data.claim;
+    } catch (error) {
+      console.error('dispatcherApi.getClaimById error:', error);
+      throw error;
+    }
+  },
+
+  recordClaimCall: async (id, payload) => {
+    try {
+      const data = await fetchWithAuth(`/claims/${id}/record-call`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      return data;
+    } catch (error) {
+      console.error('dispatcherApi.recordClaimCall error:', error);
+      throw error;
+    }
+  },
+
   getLeaveReassignments: async (options = {}) => {
     try {
       const qs = options?.refresh ? '?refresh=1' : '';
@@ -308,21 +354,7 @@ export const dispatcherApi = {
     }
   },
 
-  // --- 6. AI Document Agent ---
-  extractOrderDocument: async ({ fileBase64, mimeType, fileName, textContent }) => {
-    try {
-      const data = await fetchWithAuth('/ai/extract-order-document', {
-        method: 'POST',
-        body: JSON.stringify({ fileBase64, mimeType, fileName, textContent })
-      });
-      return data.extractedData;
-    } catch (error) {
-      console.error('dispatcherApi.extractOrderDocument error:', error);
-      throw error;
-    }
-  },
-
-  // --- 7. VRPTW Engine (Vehicle Routing Problem with Time Windows & Hanoi Truck Ban) ---
+  // --- 6. VRPTW Engine (Vehicle Routing Problem with Time Windows & Hanoi Truck Ban) ---
   optimizeMultiStopRoute: async ({ stops, startTime, truckPayloadKg, avoidTruckBan }) => {
     try {
       const data = await fetchWithAuth('/dispatcher/trips/optimize-vrptw', {
@@ -332,6 +364,30 @@ export const dispatcherApi = {
       return data;
     } catch (error) {
       console.error('dispatcherApi.optimizeMultiStopRoute error:', error);
+      throw error;
+    }
+  },
+
+  // --- 8. Duyệt phụ phí tài xế đề xuất (BUG-ITD-07) ---
+  getExtraFees: async (status = '') => {
+    try {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+      const data = await fetchWithAuth(`/extra-fees${qs}`);
+      return data.extra_fees || [];
+    } catch (error) {
+      console.warn('dispatcherApi.getExtraFees warn:', error?.message);
+      return [];
+    }
+  },
+
+  reviewExtraFee: async (id, action, note = '') => {
+    try {
+      return await fetchWithAuth(`/extra-fees/${id}/review`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action, note })
+      });
+    } catch (error) {
+      console.error('dispatcherApi.reviewExtraFee error:', error);
       throw error;
     }
   }

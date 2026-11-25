@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Modal, Form, Input, message, Progress } from 'antd';
-import { FileText, Sparkles, UploadCloud, CheckCircle2 } from 'lucide-react';
+import { Modal, Form, Input, message } from 'antd';
+import { FileText } from 'lucide-react';
 import { 
   calculateRouteEstimate, 
   calculateAlsPricing,
@@ -63,12 +63,6 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
   const [newCustomDocName, setNewCustomDocName] = useState('');
   const fileInputRef = useRef(null);
 
-  // State AI Document Agent (OCR Tờ khai / HAWB)
-  const [isAiScanning, setIsAiScanning] = useState(false);
-  const [aiScanProgress, setAiScanProgress] = useState(0);
-  const [aiScanResult, setAiScanResult] = useState(null);
-  const aiFileInputRef = useRef(null);
-
   // Tải danh sách kho thực tế của ALS từ database
   useEffect(() => {
     let active = true;
@@ -120,6 +114,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
       weight: null
     }
   ]);
+  const [cargoErrors, setCargoErrors] = useState({});
 
   const [shippingDirection, setShippingDirection] = useState('IMPORT');
 
@@ -182,117 +177,6 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
     }
   };
 
-  // --- XỬ LÝ AI DOCUMENT AGENT (OCR & TỰ ĐỘNG ĐIỀN FORM TRONG 15S) ---
-  const handleAiFileSelect = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Reset input
-    e.target.value = '';
-
-    const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
-    if (!validTypes.includes(file.type)) {
-      message.error('Vui lòng chọn tệp định dạng PDF hoặc ảnh (JPG, PNG) của Tờ khai / Chứng từ!');
-      return;
-    }
-
-    if (file.size > 15 * 1024 * 1024) {
-      message.error('Dung lượng tệp không được vượt quá 15MB!');
-      return;
-    }
-
-    setIsAiScanning(true);
-    setAiScanProgress(15);
-    setAiScanResult(null);
-
-    // Hiệu ứng tiến trình quét trong 12-15s
-    const progressInterval = setInterval(() => {
-      setAiScanProgress(prev => {
-        if (prev >= 90) return prev;
-        return prev + Math.floor(Math.random() * 12) + 5;
-      });
-    }, 600);
-
-    try {
-      const reader = new FileReader();
-      const base64Promise = new Promise((resolve, reject) => {
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-      });
-      reader.readAsDataURL(file);
-      const fileBase64 = await base64Promise;
-
-      const extracted = await dispatcherApi.extractOrderDocument({
-        fileBase64,
-        mimeType: file.type,
-        fileName: file.name
-      });
-
-      clearInterval(progressInterval);
-      setAiScanProgress(100);
-
-      if (extracted) {
-        setAiScanResult(extracted);
-        message.success('AI Document Agent đã trích xuất thành công dữ liệu chứng từ!');
-
-        // 1. Tự động điền hướng vận chuyển (IMPORT/EXPORT)
-        const direction = extracted.order_type === 'EXPORT' ? 'EXPORT' : 'IMPORT';
-        applyDirectionPreset(direction);
-
-        // 2. Tự động điền thông tin khách hàng & người nhận
-        form.setFieldsValue({
-          customer_name: extracted.customer_name || form.getFieldValue('customer_name'),
-          customer_tax_code: extracted.customer_tax_code || form.getFieldValue('customer_tax_code'),
-          customer_phone: extracted.customer_phone || form.getFieldValue('customer_phone'),
-          customer_email: extracted.customer_email || form.getFieldValue('customer_email'),
-          receiver_name: extracted.receiver_name || extracted.customer_name || form.getFieldValue('receiver_name'),
-          receiver_phone: extracted.receiver_phone || extracted.customer_phone || form.getFieldValue('receiver_phone'),
-          customer_address: extracted.delivery_address || form.getFieldValue('customer_address'),
-          delivery_address: extracted.delivery_address || form.getFieldValue('delivery_address'),
-          declaration_number: extracted.declaration_number || '',
-          order_notes: `[AI OCR: ${file.name}] Mã tờ khai: ${extracted.declaration_number || 'N/A'}`
-        });
-
-        // Tự động Geocode tọa độ địa chỉ giao hàng
-        if (extracted.delivery_address) {
-          const coords = getCoordsFromAddress(extracted.delivery_address, 'B');
-          if (coords) setDeliveryCoords(coords);
-        }
-
-        // 3. Tự động điền các dòng hàng hóa
-        if (Array.isArray(extracted.cargo_lines) && extracted.cargo_lines.length > 0) {
-          const newCargos = extracted.cargo_lines.map((c, idx) => ({
-            id: Date.now() + idx,
-            cargo_name: c.cargo_name || 'Hàng hóa linh kiện',
-            cargo_type: c.cargo_type || 'GENERAL',
-            package_count: Number(c.package_count) || 1,
-            package_unit: c.package_unit || 'Kiện',
-            length_cm: Number(c.length_cm) || 60,
-            width_cm: Number(c.width_cm) || 40,
-            height_cm: Number(c.height_cm) || 40,
-            weight: Number(c.actual_weight_kg) || 50
-          }));
-          setCargoItems(newCargos);
-        }
-
-        // 4. Gợi ý loại xe tối ưu
-        if (extracted.recommended_vehicle) {
-          form.setFieldsValue({
-            vehicle_type_required: extracted.recommended_vehicle
-          });
-        }
-      }
-    } catch (scanErr) {
-      clearInterval(progressInterval);
-      console.error('AI Scan Document error:', scanErr);
-      message.error(scanErr.message || 'Lỗi khi quét chứng từ với AI. Vui lòng thử lại hoặc nhập liệu thủ công!');
-    } finally {
-      setTimeout(() => {
-        setIsAiScanning(false);
-      }, 500);
-    }
-  };
-
   const addCargoItem = () => {
     setCargoItems(prev => [
       ...prev,
@@ -313,9 +197,26 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
   const removeCargoItem = (id) => {
     if (cargoItems.length <= 1) return;
     setCargoItems(prev => prev.filter(it => it.id !== id));
+    setCargoErrors(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const updateCargoItem = (id, field, value) => {
+    if (cargoErrors[id]?.[field]) {
+      setCargoErrors(prev => {
+        const next = { ...prev };
+        if (next[id]) {
+          const itemErr = { ...next[id] };
+          delete itemErr[field];
+          if (Object.keys(itemErr).length === 0) delete next[id];
+          else next[id] = itemErr;
+        }
+        return next;
+      });
+    }
     setCargoItems(prev => prev.map(it => {
       if (it.id === id) {
         const updated = { ...it, [field]: value };
@@ -328,6 +229,32 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
       }
       return it;
     }));
+  };
+
+  const validateCargoItems = () => {
+    const errors = {};
+    let hasError = false;
+    for (let i = 0; i < cargoItems.length; i++) {
+      const it = cargoItems[i];
+      const itemErr = {};
+      if (!it.cargo_name?.trim()) {
+        itemErr.cargo_name = 'Vui lòng nhập tên hàng hóa';
+        hasError = true;
+      }
+      if (!it.cargo_type) {
+        itemErr.cargo_type = 'Vui lòng chọn loại hàng';
+        hasError = true;
+      }
+      if (!it.weight || Number(it.weight) <= 0) {
+        itemErr.weight = 'Vui lòng nhập trọng lượng (> 0 kg)';
+        hasError = true;
+      }
+      if (Object.keys(itemErr).length > 0) {
+        errors[it.id] = itemErr;
+      }
+    }
+    setCargoErrors(errors);
+    return !hasError;
   };
 
   // Tính tổng hàng hóa theo chuẩn logistics (1 m3 = 200 kg)
@@ -425,7 +352,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
   }, [shippingDirection, flightDatetime, routeInfo.distanceKm]);
 
   useEffect(() => {
-    if (estimatedBaselineRate > 0 && !form.isFieldTouched('agreed_price')) {
+    if (estimatedBaselineRate > 0) {
       form.setFieldsValue({ agreed_price: estimatedBaselineRate });
     }
   }, [estimatedBaselineRate, form]);
@@ -545,16 +472,16 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
     setSelectedPickupPreset(defaultAlsId);
     setSelectedDeliveryPreset(defaultAlsId);
     setCustomsServiceRequired(false);
+    setCargoErrors({});
     onCancel();
   };
 
   const handleOk = () => {
+    const isCargoValid = validateCargoItems();
     form.validateFields().then((fieldValues) => {
-      for (let i = 0; i < cargoItems.length; i++) {
-        const it = cargoItems[i];
-        if (!it.cargo_name?.trim()) { message.error(`Vui lòng nhập tên hàng cho mặt hàng #${i + 1}`); return; }
-        if (!it.cargo_type) { message.error(`Vui lòng chọn loại hàng cho mặt hàng #${i + 1}`); return; }
-        if (!it.weight || Number(it.weight) <= 0) { message.error(`Vui lòng nhập trọng lượng hợp lệ (> 0 kg) cho mặt hàng #${i + 1}`); return; }
+      if (!isCargoValid) {
+        message.error('Vui lòng kiểm tra lại thông tin hàng hóa còn trống hoặc chưa hợp lệ!');
+        return;
       }
       // Validate tải trọng: Tổng tải trọng thực tế hoặc tải trọng quy đổi tính cước không được vượt quá tải trọng xe
       const selectedVehicleKey = fieldValues.vehicle_type_required || 'TRUCK_2.5T';
@@ -662,6 +589,10 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
         created_at: new Date().toISOString()
       });
       handleReset();
+    }).catch(() => {
+      if (!isCargoValid) {
+        message.error('Vui lòng điền đầy đủ các thông tin bắt buộc còn trống!');
+      }
     });
   };
 
@@ -699,87 +630,12 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
     >
       <div className="pt-2"></div>
 
-      {/* AI DOCUMENT AGENT BANNER & OCR TRIGGER */}
-      <div className="mb-4 p-3.5 bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50 border border-indigo-200/70 rounded-xl shadow-xs">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-sm shrink-0">
-              <Sparkles size={18} className="animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-gray-800 text-sm">AI Document Agent</span>
-                <span className="text-[11px] px-2 py-0.5 bg-indigo-100 text-indigo-700 font-semibold rounded-full">
-                  OCR 15s
-                </span>
-              </div>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Tự động bóc tách Tờ khai hải quan (VNACCS) / Chứng từ vận chuyển để điền form tự động
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <input
-              type="file"
-              ref={aiFileInputRef}
-              className="hidden"
-              accept=".pdf,image/png,image/jpeg,image/jpg"
-              onChange={handleAiFileSelect}
-            />
-            <button
-              type="button"
-              disabled={isAiScanning}
-              onClick={() => aiFileInputRef.current?.click()}
-              className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg shadow-sm transition-all ${
-                isAiScanning
-                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                  : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white cursor-pointer'
-              }`}
-            >
-              <UploadCloud size={15} />
-              {isAiScanning ? 'Đang phân tích...' : 'Tải lên Tờ khai để AI đọc'}
-            </button>
-          </div>
-        </div>
-
-        {/* Thanh tiến trình khi AI đang OCR */}
-        {isAiScanning && (
-          <div className="mt-3 pt-2.5 border-t border-indigo-100/80">
-            <div className="flex justify-between items-center text-xs mb-1">
-              <span className="text-indigo-700 font-medium flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
-                Gemini Vision đang đọc cấu trúc chứng từ và trích xuất hàng hóa...
-              </span>
-              <span className="font-bold text-indigo-600">{aiScanProgress}%</span>
-            </div>
-            <Progress 
-              percent={aiScanProgress} 
-              showInfo={false} 
-              strokeColor={{ '0%': '#7367f0', '100%': '#6366f1' }}
-              size="small" 
-            />
-          </div>
-        )}
-
-        {/* Kết quả scan thành công */}
-        {aiScanResult && !isAiScanning && (
-          <div className="mt-2.5 pt-2 border-t border-indigo-100 flex items-center justify-between text-xs text-emerald-700 bg-emerald-50/60 px-3 py-1.5 rounded-md">
-            <div className="flex items-center gap-1.5 font-medium">
-              <CheckCircle2 size={14} className="text-emerald-600" />
-              <span>Đã tự động điền form: {aiScanResult.customer_name || 'Doanh nghiệp'} ({aiScanResult.cargo_lines?.length || 1} dòng hàng)</span>
-            </div>
-            <span className="text-[11px] text-gray-400">Độ tin cậy: {Math.round((aiScanResult.confidence_score || 0.95) * 100)}%</span>
-          </div>
-        )}
-      </div>
-
       <Form 
         form={form} 
         layout="vertical" 
         initialValues={{ 
           source: 'HOTLINE',
-          status: 'READY_FOR_PLANNING',
+          status: 'CONFIRMED',
           is_new_customer: false,
           address_same_as_customer: false,
           pickup_address: '',
@@ -832,6 +688,7 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
           removeCargoItem={removeCargoItem}
           addCargoItem={addCargoItem}
           totals={totals}
+          cargoErrors={cargoErrors}
         />
 
         <OrderFormPricingSection
@@ -872,6 +729,17 @@ const OrderFormModal = ({ open, onCancel, onSubmit }) => {
         open={assistantDrawerOpen}
         onClose={() => setAssistantDrawerOpen(false)}
         currentCargo={cargoItems.map(it => it.cargo_name).filter(Boolean).join(', ') || 'Hàng hóa xuất nhập khẩu'}
+        cargoItems={cargoItems}
+        order={{
+          shipping_direction: shippingDirection,
+          pickup_address: watchedValues?.pickup_address || '',
+          delivery_address: watchedValues?.delivery_address || '',
+          weight: parseFloat(totals.actualWeight) || 0,
+          chargeable_weight: parseFloat(totals.chargeableWeight) || 0,
+          package_count: totals.totalCount || 0,
+          customs_service_required: customsServiceRequired,
+          items: cargoItems
+        }}
         onApplyRecommendations={handleApplyAssistantDocs}
       />
     </Modal>

@@ -386,10 +386,11 @@ const loadOrderMeta = async (orderId, orderObj = null) => {
 };
 
 // Lưu metadata vào order_notes (tự động chia nhỏ <= 450 ký tự/dòng để tương thích cột VARCHAR(500))
-const saveOrderMeta = async (orderId, meta) => {
+const saveOrderMeta = async (orderId, meta, createdBy = 1n) => {
   if (!orderId || !meta) return;
   try {
     const bigOrderId = toBigInt(orderId);
+    const creatorId = createdBy ? toBigInt(createdBy) : 1n;
     const allNotes = await prisma.order_notes.findMany({
       where: { order_id: bigOrderId },
       select: { id: true, content: true, created_at: true },
@@ -429,7 +430,7 @@ const saveOrderMeta = async (orderId, meta) => {
           data: {
             order_id: bigOrderId,
             content: `${META_NOTE_PREFIX}${jsonStr}`,
-            created_by: 1n
+            created_by: creatorId
           }
         });
       } else {
@@ -439,7 +440,7 @@ const saveOrderMeta = async (orderId, meta) => {
           chunks.push({
             order_id: bigOrderId,
             content: `[META_CHUNK_${idx}]:${piece}`,
-            created_by: 1n
+            created_by: creatorId
           });
         }
         await tx.order_notes.createMany({ data: chunks });
@@ -539,7 +540,29 @@ const getNextDispatcherForWebOrder = async () => {
   }
 };
 
+const ORDER_CODE_PREFIX = 'NEX-';
+
+const generateNexOrderCode = () =>
+  `${ORDER_CODE_PREFIX}${Math.floor(100000 + Math.random() * 900000)}`;
+
+const ensureNexOrderCode = (code) => {
+  const clean = String(code ?? '').trim().toUpperCase();
+  if (!clean) return generateNexOrderCode();
+  let normalized;
+  if (clean.startsWith(ORDER_CODE_PREFIX)) {
+    normalized = clean;
+  } else if (clean.startsWith('ORD-')) {
+    normalized = `${ORDER_CODE_PREFIX}${clean.slice(4)}`;
+  } else {
+    normalized = `${ORDER_CODE_PREFIX}${clean}`;
+  }
+  return normalized.slice(0, 20);
+};
+
 module.exports = {
+  ORDER_CODE_PREFIX,
+  generateNexOrderCode,
+  ensureNexOrderCode,
   META_NOTE_PREFIX,
   META_CHUNK_PREFIX,
   mapDbStatusToFe,

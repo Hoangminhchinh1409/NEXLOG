@@ -1,15 +1,18 @@
 import { fetchWithAuth } from './apiClient';
 
+const getCurrentMonthPeriod = () =>
+  new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 7);
+
 export const managerApi = {
   // 1. Thống kê Dashboard (Screen 16: Hybrid BI Overview)
-  getDashboardStats: async (period = '2026-10', options = {}) => {
+  getDashboardStats: async (period = getCurrentMonthPeriod(), options = {}) => {
     try {
       const params = new URLSearchParams({ period: period || 'ALL' });
       if (options?.refresh) params.set('refresh', '1');
       const data = await fetchWithAuth(`/manager/dashboard/overview?${params.toString()}`);
       return data;
     } catch (error) {
-      console.error('managerApi.getDashboardStats Error:', error);
+      console.warn('managerApi.getDashboardStats Notice:', error.message || error);
       throw error;
     }
   },
@@ -25,7 +28,7 @@ export const managerApi = {
       const data = await fetchWithAuth(url);
       return data;
     } catch (error) {
-      console.error('managerApi.getDriverPerformance Error:', error);
+      console.warn('managerApi.getDriverPerformance Notice:', error.message || error);
       throw error;
     }
   },
@@ -50,7 +53,7 @@ export const managerApi = {
       });
       return data;
     } catch (error) {
-      console.error('managerApi.createDriver Error:', error);
+      if (!error?.status || error.status >= 500) console.error('managerApi.createDriver Error:', error);
       throw error;
     }
   },
@@ -288,15 +291,38 @@ export const managerApi = {
     }
   },
 
-  decideClaim: async (id, { action, comment }) => {
+  getClaimById: async (id) => {
+    try {
+      const data = await fetchWithAuth(`/manager/claims/${id}`);
+      return data.claim;
+    } catch (error) {
+      console.error('managerApi.getClaimById Error:', error);
+      throw error;
+    }
+  },
+
+  decideClaim: async (id, payload) => {
     try {
       const data = await fetchWithAuth(`/manager/claims/${id}/decide`, {
         method: 'POST',
-        body: JSON.stringify({ action, comment })
+        body: JSON.stringify(payload)
       });
       return data;
     } catch (error) {
       console.error('managerApi.decideClaim Error:', error);
+      throw error;
+    }
+  },
+
+  recordClaimPayment: async (id, payload) => {
+    try {
+      const data = await fetchWithAuth(`/manager/claims/${id}/record-payment`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      return data;
+    } catch (error) {
+      console.error('managerApi.recordClaimPayment Error:', error);
       throw error;
     }
   },
