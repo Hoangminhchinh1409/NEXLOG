@@ -31,7 +31,7 @@ const acceptTrip = async (
   }
 
   const profile = await getMyProfile(userId);
-  const trip = await driverModel.getTripDetail(tripId, profile.id);
+  const trip = await driverModel.getTripDetail(tripId, profile.id, { requireActive: true });
 
   if (!trip) {
     const error = new Error(
@@ -110,7 +110,7 @@ const arriveAtStop = async (
   }
 
   const profile = await getMyProfile(userId);
-  const trip = await driverModel.getTripDetail(tripId, profile.id);
+  const trip = await driverModel.getTripDetail(tripId, profile.id, { requireActive: true });
   if (!trip) {
     const error = new Error("Chuyến xe không tồn tại");
     error.statusCode = 404;
@@ -247,7 +247,7 @@ const recordPickup = async (userId, tripId, stopId, pickupData) => {
   const parsedPackages = parseInt(loaded_packages, 10);
 
   const profile = await getMyProfile(userId);
-  const trip = await driverModel.getTripDetail(tripId, profile.id);
+  const trip = await driverModel.getTripDetail(tripId, profile.id, { requireActive: true });
   if (!trip) {
     const error = new Error("Chuyến xe không tồn tại");
     error.statusCode = 404;
@@ -368,7 +368,7 @@ const recordDelivery = async (userId, tripId, stopId, deliveryData) => {
   }
 
   const profile = await getMyProfile(userId);
-  const trip = await driverModel.getTripDetail(tripId, profile.id);
+  const trip = await driverModel.getTripDetail(tripId, profile.id, { requireActive: true });
   if (!trip) {
     const error = new Error("Chuyến xe không tồn tại");
     error.statusCode = 404;
@@ -387,6 +387,15 @@ const recordDelivery = async (userId, tripId, stopId, deliveryData) => {
     );
     error.statusCode = 400;
     throw error;
+  }
+
+  // BUG-SYS-18: Không tạo thêm bằng chứng POD trùng lặp nếu điểm dừng đã hoàn tất giao hàng
+  if (["DONE", "DELIVERED", "COMPLETED"].includes(String(stop.status || "").trim().toUpperCase())) {
+    return {
+      success: true,
+      message: "Điểm dừng này đã được xác nhận giao hàng trước đó.",
+      stop,
+    };
   }
 
   // 1. Kiểm tra ảnh theo loại điểm dừng (Điểm hoàn hàng về kho ALS / Xuất khẩu / Nhập khẩu)
@@ -615,7 +624,7 @@ const recordStopEvent = async (
     return { success: true, message: "Hành động đã được ghi nhận trước đó" };
   }
   const profile = await getMyProfile(userId);
-  const trip = await driverModel.getTripDetail(tripId, profile.id);
+  const trip = await driverModel.getTripDetail(tripId, profile.id, { requireActive: true });
   if (!trip) {
     const error = new Error("Chuyến xe không tồn tại");
     error.statusCode = 404;
@@ -640,15 +649,31 @@ const recordStopEvent = async (
   const currentStopStatus = String(stop.status || "").trim().toUpperCase();
 
   // BUG-SYS-16: Bắt buộc tuân thủ thứ tự 4 bước điểm dừng (Arrived -> Loading Started -> Loading Done -> Left)
-  if (
-    ["Loading Started", "Loading Done", "Left"].includes(normalizedEventType) &&
-    (!currentStopStatus || currentStopStatus === "PENDING" || currentStopStatus === "SCHEDULED")
-  ) {
+  const normStopSt = currentStopStatus.replace(/\s+/g, "_");
+  const isRestStop = String(stop.stop_type || stop.type || "").trim().toUpperCase() === "REST";
+  if (normalizedEventType === "Loading Started" && normStopSt !== "ARRIVED") {
     const error = new Error(
-      `Không thể ghi nhận "${normalizedEventType}" khi chưa xác nhận đến điểm dừng (Arrived).`,
+      `Không thể ghi nhận "Loading Started" khi điểm dừng chưa ở trạng thái Arrived (hiện tại: ${stop.status}).`,
     );
     error.statusCode = 400;
     throw error;
+  }
+  if (normalizedEventType === "Loading Done" && normStopSt !== "LOADING_STARTED") {
+    const error = new Error(
+      `Không thể ghi nhận "Loading Done" khi chưa bắt đầu bốc/dỡ hàng (Loading Started).`,
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  if (normalizedEventType === "Left") {
+    const allowedBeforeLeft = isRestStop ? ["ARRIVED", "LOADING_DONE"] : ["LOADING_DONE"];
+    if (!allowedBeforeLeft.includes(normStopSt)) {
+      const error = new Error(
+        `Không thể ghi nhận "Left" khi chưa hoàn thành các bước trước đó (hiện tại: ${stop.status}).`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
   }
 
   // BUG-SYS-36: Không cho phép thao tác trên đơn hàng đã bị hủy
@@ -761,7 +786,7 @@ const recordStopEvent = async (
       if (trip.truck?.id) {
         await driverModel.updateTruckStatus(trip.truck.id, "Available");
       }
-      await driverModel.updateDriverProfileStatus(profile.id, "Available");
+      await driverModel.updateDriverProfileStatus(profile.id, "Active");
       await prisma.driver_profiles.update({
         where: { id: BigInt(profile.id) },
         data: { last_trip_ended_at: new Date(recordedTime) },

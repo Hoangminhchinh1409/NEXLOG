@@ -1,30 +1,16 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import dynamic from 'next/dynamic';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Table, Tag, Button, Input, DatePicker, Select, Row, Col, message, Badge, Tooltip, Space, Modal, Image, Empty } from 'antd';
 import { Search, Plus, Download, Eye, PhoneCall, Globe, RefreshCw, ArrowUpRight, XCircle, Sparkles, Bot, DollarSign, CheckCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import OrderFormModal from '../../components/dispatcher/OrderFormModal';
+import OrderDetailsModal from '../../components/dispatcher/OrderDetailsModal';
+import CancelOrderModal from '../../components/dispatcher/CancelOrderModal';
+import DocumentAssistantDrawer from '../../components/dispatcher/DocumentAssistantDrawer';
 import { orderApi } from '../../api/orderApi';
 import { dispatcherApi } from '../../api/dispatcherApi';
 import { useAuth } from '../../providers/AuthProvider';
 import ReadOnlyBanner from '../../components/common/ReadOnlyBanner';
 import AccessDenied from '../../components/common/AccessDenied';
-
-const OrderFormModal = dynamic(
-  () => import('../../components/dispatcher/OrderFormModal'),
-  { ssr: false }
-);
-const OrderDetailsModal = dynamic(
-  () => import('../../components/dispatcher/OrderDetailsModal'),
-  { ssr: false }
-);
-const CancelOrderModal = dynamic(
-  () => import('../../components/dispatcher/CancelOrderModal'),
-  { ssr: false }
-);
-const DocumentAssistantDrawer = dynamic(
-  () => import('../../components/dispatcher/DocumentAssistantDrawer'),
-  { ssr: false }
-);
 
 const { RangePicker } = DatePicker;
 
@@ -64,12 +50,10 @@ const OrderManagement = () => {
   const isManager = Number(user?.role_id) === 2;
   const readOnly = isReadOnly('ORDER_MANAGE') || isManager;
   const allowed = !user || Number(user.role_id) === 1 || Number(user.role_id) === 3 || (hasPermission && hasPermission('ORDER_MANAGE'));
-  const cachedInitialOrders = orderApi.getCachedOrders();
-  const [orders, setOrders] = useState(() => cachedInitialOrders || []);
-  const [loading, setLoading] = useState(() => !cachedInitialOrders);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [filterText, setFilterText] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const pollingInFlightRef = useRef(false);
   
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -80,8 +64,18 @@ const OrderManagement = () => {
   const [isFeeModalOpen, setIsFeeModalOpen] = useState(false);
   const [reviewingFeeId, setReviewingFeeId] = useState(null);
 
+  const fetchProposedFees = useCallback(async () => {
+    if (!allowed) return;
+    try {
+      const list = await dispatcherApi.getExtraFees('Proposed');
+      setProposedFees(list || []);
+    } catch (e) {
+      console.warn('fetchProposedFees warn:', e?.message);
+    }
+  }, [allowed]);
+
   // Tải danh sách đơn hàng từ Backend Supabase (silent: true khi cập nhật nền không bật loading)
-  const fetchOrders = useCallback(async (isSilent = false, force = true) => {
+  const fetchOrders = useCallback(async (isSilent = false) => {
     if (!allowed) {
       setLoading(false);
       return;
@@ -89,16 +83,14 @@ const OrderManagement = () => {
     try {
       if (!isSilent) setLoading(true);
       const [data, fees] = await Promise.all([
-        orderApi.getAllOrders({ force }),
+        orderApi.getAllOrders(),
         dispatcherApi.getExtraFees('Proposed')
       ]);
       setOrders(data);
       setProposedFees(fees || []);
     } catch (err) {
       console.error('Fetch orders error:', err);
-      if (!isSilent) {
-        message.error('Không thể kết nối đến máy chủ BE để lấy danh sách đơn');
-      }
+      message.error('Không thể kết nối đến máy chủ BE để lấy danh sách đơn');
     } finally {
       if (!isSilent) setLoading(false);
     }
@@ -109,7 +101,7 @@ const OrderManagement = () => {
       setReviewingFeeId(feeId);
       const res = await dispatcherApi.reviewExtraFee(feeId, action);
       message.success(res?.message || (action === 'CONFIRM' ? 'Đã xác nhận phụ phí!' : 'Đã từ chối phụ phí!'));
-      await fetchOrders(true, true);
+      await fetchOrders(true);
     } catch (err) {
       message.error(err?.message || 'Lỗi khi duyệt phụ phí');
     } finally {
@@ -125,11 +117,9 @@ const OrderManagement = () => {
         setLoading(false);
         return;
       }
-      const hasWarmCache = Boolean(orderApi.getCachedOrders());
       try {
-        // Nếu đã có cache từ màn Tổng quan, hiển thị ngay lập tức và đồng bộ phụ phí + dữ liệu nền
         const [data, fees] = await Promise.all([
-          orderApi.getAllOrders({ force: !hasWarmCache }),
+          orderApi.getAllOrders(),
           dispatcherApi.getExtraFees('Proposed')
         ]);
         if (isSubscribed) {
@@ -140,9 +130,7 @@ const OrderManagement = () => {
       } catch (err) {
         if (isSubscribed) {
           console.error('Fetch orders error:', err);
-          if (!hasWarmCache) {
-            message.error('Không thể kết nối đến máy chủ BE để lấy danh sách đơn');
-          }
+          message.error('Không thể kết nối đến máy chủ BE để lấy danh sách đơn');
           setLoading(false);
         }
       }
@@ -150,12 +138,10 @@ const OrderManagement = () => {
 
     loadInitialData();
 
-    // Tự động kiểm tra cập nhật mỗi 15 giây (chỉ chạy khi tab đang mở và không chồng chéo request)
+    // Tự động kiểm tra cập nhật mỗi 5 giây để đồng bộ trạng thái mới nhất
     const pollInterval = setInterval(async () => {
-      if (!allowed || document.hidden || pollingInFlightRef.current) return;
-      pollingInFlightRef.current = true;
       try {
-        const latestOrders = await orderApi.getAllOrders({ force: true });
+        const latestOrders = await orderApi.getAllOrders();
         if (isSubscribed && Array.isArray(latestOrders)) {
           setOrders(latestOrders);
           setSelectedOrderForDetails(prevSelected => {
@@ -164,15 +150,13 @@ const OrderManagement = () => {
             return found ? {...prevSelected,...found }: prevSelected;
           });
         }
-      } catch {
+      } catch (e) {
         // bỏ qua lỗi polling
-      } finally {
-        pollingInFlightRef.current = false;
       }
-    }, 15000);
+    }, 5000);
 
     const handleStorageChange = () => {
-      fetchOrders(true, true);
+      fetchOrders(true);
     };
 
     window.addEventListener('nexlog_orders_updated', handleStorageChange);
@@ -181,7 +165,7 @@ const OrderManagement = () => {
       clearInterval(pollInterval);
       window.removeEventListener('nexlog_orders_updated', handleStorageChange);
     };
-  }, [allowed, fetchOrders]);
+  }, [fetchOrders]);
 
   const handleCreateOrder = async (values) => {
     try {
@@ -769,38 +753,32 @@ const OrderManagement = () => {
       )}
 
       {/* Modal Chi Tiết Hồ Sơ Đơn Hàng & Duyệt Chứng Từ */}
-      {Boolean(selectedOrderForDetails) && (
-        <OrderDetailsModal
-          open={Boolean(selectedOrderForDetails)}
-          order={selectedOrderForDetails}
-          onCancel={() => setSelectedOrderForDetails(null)}
-          onUpdateOrder={handleUpdateOrder}
-          readOnly={readOnly}
-        />
-      )}
+      <OrderDetailsModal
+        open={Boolean(selectedOrderForDetails)}
+        order={selectedOrderForDetails}
+        onCancel={() => setSelectedOrderForDetails(null)}
+        onUpdateOrder={handleUpdateOrder}
+        readOnly={readOnly}
+      />
 
       {/* Modal Hủy Đơn Hàng theo chuẩn */}
-      {Boolean(selectedOrderForCancel) && (
-        <CancelOrderModal
-          open={Boolean(selectedOrderForCancel)}
-          order={selectedOrderForCancel}
-          onCancel={() => setSelectedOrderForCancel(null)}
-          onConfirmCancel={handleConfirmCancel}
-        />
-      )}
+      <CancelOrderModal
+        open={Boolean(selectedOrderForCancel)}
+        order={selectedOrderForCancel}
+        onCancel={() => setSelectedOrderForCancel(null)}
+        onConfirmCancel={handleConfirmCancel}
+      />
 
       {/* Trợ lý AI Logistics (Gemini) mở trực tiếp ngoài màn hình Quản lý đơn hàng */}
-      {assistantDrawerOpen && (
-        <DocumentAssistantDrawer
-          open={assistantDrawerOpen}
-          onClose={() => setAssistantDrawerOpen(false)}
-          currentCargo="Lô hàng thiết bị điện tử, linh kiện máy tính nhập khẩu từ Hàn Quốc về Sân bay Nội Bài giao KCN Tiên Sơn Bắc Ninh"
-          onApplyRecommendations={() => {
-            setAssistantDrawerOpen(false);
-            setIsCreateModalOpen(true);
-          }}
-        />
-      )}
+      <DocumentAssistantDrawer
+        open={assistantDrawerOpen}
+        onClose={() => setAssistantDrawerOpen(false)}
+        currentCargo="Lô hàng thiết bị điện tử, linh kiện máy tính nhập khẩu từ Hàn Quốc về Sân bay Nội Bài giao KCN Tiên Sơn Bắc Ninh"
+        onApplyRecommendations={() => {
+          setAssistantDrawerOpen(false);
+          setIsCreateModalOpen(true);
+        }}
+      />
 
       {/* Modal Duyệt Phụ Phí Tài Xế Đề Xuất (BUG-ITD-07) */}
       <Modal

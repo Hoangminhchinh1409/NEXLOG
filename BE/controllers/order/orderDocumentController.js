@@ -252,17 +252,26 @@ const customerUploadDocuments = async (req, res) => {
       ? meta.documents
       : (Array.isArray(meta.web_workflow.documents) ? meta.web_workflow.documents : []);
 
-    const mergedDocs = (documents || []).map((incomingDoc) => {
+    // BUG-SYS-09: Merge chứng từ mới tải lên vào danh sách chứng từ hiện có để không làm mất các chứng từ khác
+    const incomingList = Array.isArray(documents) ? documents : [];
+    const mergedMap = new Map();
+    for (const ed of existingDocs) {
+      if (ed?.key) mergedMap.set(ed.key, ed);
+    }
+    for (const incomingDoc of incomingList) {
+      if (!incomingDoc?.key) continue;
       const isCustoms =
         incomingDoc.preparedBy === 'DISPATCHER' ||
         incomingDoc.key === 'doc-basic-1' ||
         incomingDoc.name?.toLowerCase().includes('tờ khai hải quan');
-      const existingMatch = existingDocs.find((d) => d.key === incomingDoc.key);
+      const existingMatch = mergedMap.get(incomingDoc.key);
       if (isCustoms && existingMatch && existingMatch.file && existingMatch.file !== 'Chờ tải lên') {
-        return existingMatch;
+        mergedMap.set(incomingDoc.key, existingMatch);
+      } else {
+        mergedMap.set(incomingDoc.key, incomingDoc);
       }
-      return incomingDoc;
-    });
+    }
+    const mergedDocs = Array.from(mergedMap.values());
 
     const uploadedDocs = await normalizeOrderDocAttachments(
       mergedDocs,
