@@ -776,7 +776,7 @@ export default function HomePage({
               playsInline
             />
             <div className="nx-video-caption">
-              <div className="nx-eyebrow">NEXLOG · INTRO FILM</div>
+              <div className="nx-eyebrow">{t.modals.videoEyebrow}</div>
               <p>{t.modals.videoCaption}</p>
             </div>
           </div>
@@ -805,7 +805,7 @@ export default function HomePage({
             </button>
             <div className="nx-product-modal-content">
               <div>
-                <div className="nx-kicker">NEXLOG PLATFORM</div>
+                <div className="nx-kicker">{t.modals.productEyebrow}</div>
                 <h2>{currentProduct.modalTitle}</h2>
                 <p>{currentProduct.modalIntro}</p>
               </div>
@@ -847,7 +847,7 @@ export default function HomePage({
             </button>
             <div
               className="nx-gallery-photo g1"
-              data-label="PILOT · SAIGON FREIGHT"
+              data-label={trials[0].badge}
             >
               <img
                 src="/images/trials/trial-1.jpg"
@@ -856,7 +856,7 @@ export default function HomePage({
             </div>
             <div
               className="nx-gallery-photo g2"
-              data-label="DEMO · VIETAIR CARGO"
+              data-label={trials[1].badge}
             >
               <img
                 src="/images/trials/trial-2.jpg"
@@ -865,7 +865,7 @@ export default function HomePage({
             </div>
             <div
               className="nx-gallery-photo g3"
-              data-label="TRIAL · SGN CARGO HUB"
+              data-label={trials[2].badge}
             >
               <img
                 src="/images/trials/trial-3.jpg"
@@ -874,7 +874,7 @@ export default function HomePage({
             </div>
             <div
               className="nx-gallery-photo g4"
-              data-label="WORKSHOP · MEKONG LOGISTICS"
+              data-label={trials[3].badge}
             >
               <img
                 src="/images/trials/trial-4.jpg"
