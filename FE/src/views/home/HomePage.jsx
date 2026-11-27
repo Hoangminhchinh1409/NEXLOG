@@ -4,200 +4,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import ConsultationBookingModal from "@/src/components/home/ConsultationBookingModal";
+import { LANDING_COPY } from "./landingI18n";
 import "./landing.css";
 
-const PRODUCTS = [
-  {
-    id: 0,
-    icon: "✈",
-    shortTag: "01 / AIR CARGO",
-    label: "Điều vận hàng không",
-    tag: "01 / AIR CARGO OPERATIONS",
-    title: "Điều vận\ntrong tầm nhìn.",
-    desc: "Kết nối thông tin vận hành, lịch trình và trạng thái hàng hóa trên cùng một hành trình.",
-    modalTitle: "Điều vận hàng không",
-    modalIntro:
-      "Tổ chức thông tin và các bước phối hợp trong hoạt động vận chuyển hàng không.",
-    details: [
-      [
-        "01",
-        "Thông tin chuyến & lô hàng",
-        "Tập trung dữ liệu quan trọng để đội ngũ dễ theo dõi.",
-      ],
-      [
-        "02",
-        "Điều phối quy trình",
-        "Hỗ trợ phối hợp giữa các bộ phận trong quá trình xử lý.",
-      ],
-      [
-        "03",
-        "Góc nhìn vận hành",
-        "Giúp người phụ trách có thêm ngữ cảnh khi đưa ra quyết định.",
-      ],
-    ],
-  },
-  {
-    id: 1,
-    icon: "◎",
-    shortTag: "02 / TRACK & TRACE",
-    label: "Theo dõi vận đơn",
-    tag: "02 / TRACK & TRACE",
-    title: "Theo dõi từng\nchuyển động.",
-    desc: "Tra cứu vận đơn và nắm bắt trạng thái lô hàng rõ ràng hơn trong suốt hành trình.",
-    modalTitle: "Theo dõi vận đơn",
-    modalIntro:
-      "Đưa thông tin vận đơn đến gần hơn với người vận hành và khách hàng.",
-    details: [
-      ["01", "Tra cứu vận đơn", "Tìm kiếm nhanh theo mã HAWB / MAWB và mã đơn hàng."],
-      [
-        "02",
-        "Trạng thái hành trình",
-        "Theo dõi thông tin cập nhật theo từng chặng vận chuyển.",
-      ],
-      [
-        "03",
-        "Thông tin dự kiến",
-        "Hiển thị mốc thời gian và các dữ liệu liên quan theo thời gian thực.",
-      ],
-    ],
-  },
-  {
-    id: 2,
-    icon: "▦",
-    shortTag: "03 / WAREHOUSE",
-    label: "Ga hàng hóa & kho vận",
-    tag: "03 / WAREHOUSE & CARGO",
-    title: "Vận hành kho\ncó kết nối.",
-    desc: "Liên kết hoạt động tiếp nhận, phân loại, lưu kho và xử lý hàng hóa trong một luồng rõ ràng.",
-    modalTitle: "Ga hàng hóa & kho vận",
-    modalIntro:
-      "Kết nối hoạt động tại nhà ga hàng hóa, kho và các điểm xử lý liên quan.",
-    details: [
-      [
-        "01",
-        "Tiếp nhận & phân loại",
-        "Quản lý thông tin hàng hóa qua từng bước xử lý.",
-      ],
-      [
-        "02",
-        "Lưu kho thông minh",
-        "Hỗ trợ quản lý hoạt động kho và dữ liệu hàng hóa chính xác.",
-      ],
-      [
-        "03",
-        "Luồng xử lý liền mạch",
-        "Tạo sự đồng bộ giữa nhà ga, kho bãi và đội ngũ giao nhận.",
-      ],
-    ],
-  },
-  {
-    id: 3,
-    icon: "⇢",
-    shortTag: "04 / TRANSPORT",
-    label: "Vận tải & kết nối",
-    tag: "04 / TRANSPORT & CONNECTIVITY",
-    title: "Mọi chặng đường\ncùng một nhịp.",
-    desc: "Kết nối vận tải và thông tin giao nhận để hành trình hàng hóa được theo dõi xuyên suốt hơn.",
-    modalTitle: "Vận tải & kết nối",
-    modalIntro:
-      "Tạo liên kết giữa các chặng vận chuyển và các điểm giao nhận trong chuỗi logistics.",
-    details: [
-      [
-        "01",
-        "Kết nối điểm đi – đến",
-        "Làm rõ các điểm trung chuyển trong hành trình.",
-      ],
-      [
-        "02",
-        "Thông tin vận tải",
-        "Tập trung thông tin phục vụ điều phối đội xe và giám sát.",
-      ],
-      [
-        "03",
-        "Chứng từ & đối soát",
-        "Liên kết với các thông tin tra cứu, chứng từ và hóa đơn.",
-      ],
-    ],
-  },
-];
-
-const JOURNEY_STEPS = [
-  {
-    num: "01",
-    title: "Tiếp nhận & điều phối",
-    desc: "Tổ chức thông tin lô hàng, lịch trình và nhu cầu vận chuyển.",
-    micro: "PLAN / BOOK",
-  },
-  {
-    num: "02",
-    title: "Vận hành & giám sát",
-    desc: "Theo dõi trạng thái vận đơn, hoạt động ga hàng hóa và các điểm trung chuyển.",
-    micro: "OPERATE / TRACK",
-  },
-  {
-    num: "03",
-    title: "Kho vận & giao nhận",
-    desc: "Kết nối hoạt động lưu kho, vận tải và thông tin giao nhận trên hành trình.",
-    micro: "WAREHOUSE / DELIVER",
-  },
-  {
-    num: "04",
-    title: "Đối soát & minh bạch",
-    desc: "Hỗ trợ tra cứu chứng từ, hóa đơn và thông tin cần thiết cho khách hàng.",
-    micro: "REVIEW / COMPLETE",
-  },
-];
-
-const ENTERPRISE_TRIALS = [
-  {
-    id: "tc-1",
-    slotClass: "nx-tc-1",
-    src: "/images/trials/trial-1.jpg",
-    badge: "PILOT · SAIGON FREIGHT",
-    title: "Đội ngũ điều vận dùng thử",
-    desc: "Nhóm điều phối của doanh nghiệp logistics trải nghiệm bảng điều khiển tuyến vận tải NEXLOG trong buổi dùng thử thực tế.",
-  },
-  {
-    id: "tc-2",
-    slotClass: "nx-tc-2",
-    src: "/images/trials/trial-2.jpg",
-    badge: "DEMO · VIETAIR CARGO",
-    title: "Trải nghiệm theo dõi vận đơn",
-    desc: "Giám đốc chuỗi cung ứng kiểm thử luồng theo dõi vận đơn hàng không và cảnh báo trạng thái trực tiếp cùng chuyên gia NEXLOG.",
-  },
-  {
-    id: "tc-3",
-    slotClass: "nx-tc-3",
-    src: "/images/trials/trial-3.jpg",
-    badge: "TRIAL · SGN CARGO HUB",
-    title: "Thử nghiệm quản lý kho vận",
-    desc: "Quản lý kho hàng kiểm tra thao tác tiếp nhận và đối soát hàng hóa trên thiết bị di động ngay tại ga hàng hóa.",
-  },
-  {
-    id: "tc-4",
-    slotClass: "nx-tc-4",
-    src: "/images/trials/trial-4.jpg",
-    badge: "WORKSHOP · MEKONG LOGISTICS",
-    title: "Buổi onboarding doanh nghiệp",
-    desc: "Các doanh nghiệp đối tác tham gia phiên trải nghiệm thực tế và đóng góp phản hồi trực tiếp cho đội ngũ sản phẩm NEXLOG.",
-  },
-  {
-    id: "tc-5",
-    slotClass: "nx-tc-5",
-    src: "/images/trials/trial-5.jpg",
-    badge: "CONTROL TOWER · ASIALINK",
-    title: "Vận hành thử trung tâm điều phối",
-    desc: "Kiểm thử màn hình trung tâm điều phối đa tuyến theo thời gian thực để đánh giá tốc độ phản ứng vận hành.",
-  },
-  {
-    id: "tc-6",
-    slotClass: "nx-tc-6",
-    src: "/images/trials/trial-6.jpg",
-    badge: "PARTNER · PACIFIC FORWARDING",
-    title: "Hợp tác triển khai thực tế",
-    desc: "Đại diện doanh nghiệp hoàn tất phiên dùng thử sản phẩm và thống nhất lộ trình kết nối hệ thống cùng NEXLOG.",
-  },
-];
+const LANG_STORAGE_KEY = "nexlog_lang";
 
 function BrandLogo({ variant = "dark", onClick }) {
   return (
@@ -213,7 +23,38 @@ function BrandLogo({ variant = "dark", onClick }) {
   );
 }
 
-export default function HomePage() {
+function LanguageSwitch({ lang, onChange, variant = "dark" }) {
+  return (
+    <div
+      className={`nx-lang-switch ${variant === "dark" ? "nx-lang-switch--dark" : "nx-lang-switch--light"}`}
+      role="group"
+      aria-label="Language switcher"
+    >
+      <button
+        type="button"
+        className={lang === "vi" ? "active" : ""}
+        onClick={() => onChange("vi")}
+        aria-pressed={lang === "vi"}
+      >
+        VI
+      </button>
+      <button
+        type="button"
+        className={lang === "en" ? "active" : ""}
+        onClick={() => onChange("en")}
+        aria-pressed={lang === "en"}
+      >
+        EN
+      </button>
+    </div>
+  );
+}
+
+export default function HomePage({
+  initialLang = "vi",
+  initialCountry = "",
+}) {
+  const [lang, setLang] = useState(initialLang === "en" ? "en" : "vi");
   const [activeProduct, setActiveProduct] = useState(0);
   const [isScrolled, setIsScrolled] = useState(false);
   const [showFloatPlane, setShowFloatPlane] = useState(false);
@@ -221,7 +62,7 @@ export default function HomePage() {
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [galleryModalOpen, setGalleryModalOpen] = useState(false);
-  const [activeTrialPhoto, setActiveTrialPhoto] = useState(null);
+  const [activeTrialPhotoId, setActiveTrialPhotoId] = useState(null);
   const [consultationOpen, setConsultationOpen] = useState(false);
 
   const [contactInView, setContactInView] = useState(false);
@@ -232,7 +73,50 @@ export default function HomePage() {
   const modalVideoRef = useRef(null);
   const toastTimerRef = useRef(null);
 
-  const currentProduct = PRODUCTS[activeProduct];
+  const t = LANDING_COPY[lang] || LANDING_COPY.vi;
+  const products = t.platform.products;
+  const currentProduct = products[activeProduct] || products[0];
+  const trials = t.contact.trials;
+  const activeTrialPhoto = activeTrialPhotoId
+    ? trials.find((item) => item.id === activeTrialPhotoId) || null
+    : null;
+
+  const handleLanguageChange = (nextLang) => {
+    const normalized = nextLang === "en" ? "en" : "vi";
+    setLang(normalized);
+    try {
+      document.cookie = `${LANG_STORAGE_KEY}=${normalized}; path=/; max-age=31536000; SameSite=Lax`;
+      window.localStorage.setItem(LANG_STORAGE_KEY, normalized);
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  // Tự động nhận diện quốc gia qua IP (/api/geo) khi chưa có cookie & chưa có Cloudflare header (ví dụ chạy local)
+  useEffect(() => {
+    if (initialCountry) return undefined;
+
+    let cancelled = false;
+    fetch("/api/geo", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        if (data.lang === "vi" || data.lang === "en") {
+          setLang(data.lang);
+        }
+      })
+      .catch(() => {
+        // giữ nguyên ngôn ngữ mặc định nếu offline
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialCountry]);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   const scrollTo = (selector) => {
     const el = document.querySelector(selector);
@@ -293,12 +177,12 @@ export default function HomePage() {
       videoModalOpen ||
       productModalOpen ||
       galleryModalOpen ||
-      Boolean(activeTrialPhoto);
+      Boolean(activeTrialPhotoId);
     document.body.style.overflow = anyModalOpen ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
     };
-  }, [videoModalOpen, productModalOpen, galleryModalOpen, activeTrialPhoto]);
+  }, [videoModalOpen, productModalOpen, galleryModalOpen, activeTrialPhotoId]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -306,7 +190,7 @@ export default function HomePage() {
         setVideoModalOpen(false);
         setProductModalOpen(false);
         setGalleryModalOpen(false);
-        setActiveTrialPhoto(null);
+        setActiveTrialPhotoId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -324,9 +208,7 @@ export default function HomePage() {
     e.preventDefault();
     const trimmed = leadEmail.trim();
     if (!trimmed) return;
-    setToastMessage(
-      `Cảm ơn bạn! Email ${trimmed} đã được ghi nhận — đội ngũ NEXLOG sẽ sớm liên hệ.`,
-    );
+    setToastMessage(t.contact.toastSuccess(trimmed));
     setLeadEmail("");
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => setToastMessage(""), 5000);
@@ -365,7 +247,7 @@ export default function HomePage() {
                   scrollTo("#platform");
                 }}
               >
-                Hệ thống
+                {t.nav.platform}
               </a>
               <a
                 href="#journey"
@@ -374,7 +256,7 @@ export default function HomePage() {
                   scrollTo("#journey");
                 }}
               >
-                Giải pháp
+                {t.nav.journey}
               </a>
               <a
                 href="#people"
@@ -383,52 +265,55 @@ export default function HomePage() {
                   scrollTo("#people");
                 }}
               >
-                Con người
+                {t.nav.people}
               </a>
-              <Link href="/blog">Tin tức</Link>
+              <Link href="/blog">{t.nav.blog}</Link>
             </nav>
-            <button
-              type="button"
-              className="nx-top-cta"
-              onClick={() => scrollTo("#contact")}
-            >
-              Kết nối với chúng tôi&nbsp; ↗
-            </button>
+            <div className="nx-topbar-actions">
+              <LanguageSwitch
+                lang={lang}
+                onChange={handleLanguageChange}
+                variant="dark"
+              />
+              <button
+                type="button"
+                className="nx-top-cta"
+                onClick={() => scrollTo("#contact")}
+              >
+                {t.nav.connect}&nbsp; ↗
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="nx-intro-content">
           <div className="nx-intro-copy">
             <div className="nx-eyebrow">
-              <span className="nx-dot" /> SMART LOGISTICS EXPERIENCE · 01 / 04
+              <span className="nx-dot" /> {t.hero.eyebrow}
             </div>
             <h1>
-              Every move.
+              {t.hero.titleLine1}
               <br />
-              <em>In sync.</em>
+              <em>{t.hero.titleLine2}</em>
             </h1>
-            <p className="nx-intro-lead">
-              Một hệ thống. Một góc nhìn xuyên suốt. NEXLOG kết nối các mắt xích
-              logistics hàng không để mỗi chuyển động trở nên rõ ràng và chủ
-              động hơn.
-            </p>
+            <p className="nx-intro-lead">{t.hero.lead}</p>
             <div className="nx-actions">
               <button
                 type="button"
                 className="nx-btn nx-btn-orange"
                 onClick={() => setVideoModalOpen(true)}
               >
-                ▶&nbsp; Xem video giới thiệu
+                ▶&nbsp; {t.hero.watchVideo}
               </button>
               <button
                 type="button"
                 className="nx-btn nx-btn-glass"
                 onClick={() => scrollTo("#home")}
               >
-                Khám phá NEXLOG <span className="nx-arrow">↘</span>
+                {t.hero.explore} <span className="nx-arrow">↘</span>
               </button>
             </div>
-            <div className="nx-intro-meta">A clearer way to move cargo</div>
+            <div className="nx-intro-meta">{t.hero.meta}</div>
           </div>
 
           <div className="nx-flight-visual" aria-hidden="true">
@@ -441,26 +326,26 @@ export default function HomePage() {
             <div className="nx-plane-fly">✈</div>
             <div className="nx-orbit-core">
               <div className="nx-core-card">
-                <div className="nx-tiny">Cargo control tower</div>
+                <div className="nx-tiny">{t.hero.cardTiny}</div>
                 <strong>360°</strong>
-                <span>One connected view</span>
+                <span>{t.hero.cardSub}</span>
                 <div className="nx-core-stat">
-                  <span>VISIBILITY</span>
-                  <b>● LIVE</b>
+                  <span>{t.hero.cardStatLabel}</span>
+                  <b>{t.hero.cardStatVal}</b>
                 </div>
               </div>
             </div>
             <div className="nx-flight-label nx-label-a">
-              ORIGIN <b>SGN · VIETNAM</b>
+              {t.hero.originLabel} <b>{t.hero.originVal}</b>
             </div>
             <div className="nx-flight-label nx-label-b">
-              DESTINATION <b>GLOBAL NETWORK</b>
+              {t.hero.destLabel} <b>{t.hero.destVal}</b>
             </div>
           </div>
         </div>
 
         <div className="nx-scroll-cue">
-          <i /> Scroll to explore
+          <i /> {t.hero.scrollCue}
         </div>
       </section>
 
@@ -482,7 +367,7 @@ export default function HomePage() {
                 scrollTo("#home");
               }}
             >
-              Tổng quan
+              {t.nav.overview}
             </a>
             <a
               href="#platform"
@@ -491,7 +376,7 @@ export default function HomePage() {
                 scrollTo("#platform");
               }}
             >
-              Hệ thống
+              {t.nav.platform}
             </a>
             <a
               href="#journey"
@@ -500,7 +385,7 @@ export default function HomePage() {
                 scrollTo("#journey");
               }}
             >
-              Giải pháp
+              {t.nav.journey}
             </a>
             <a
               href="#people"
@@ -509,20 +394,25 @@ export default function HomePage() {
                 scrollTo("#people");
               }}
             >
-              Khách hàng
+              {t.nav.customers}
             </a>
-            <Link href="/blog">Tin tức</Link>
+            <Link href="/blog">{t.nav.blog}</Link>
           </nav>
           <div className="nx-nav-actions">
+            <LanguageSwitch
+              lang={lang}
+              onChange={handleLanguageChange}
+              variant="light"
+            />
             <Link href="/login" className="nx-nav-login">
-              Đăng nhập
+              {t.nav.login}
             </Link>
             <button
               type="button"
               className="nx-nav-demo"
               onClick={() => setConsultationOpen(true)}
             >
-              ĐẶT LỊCH TƯ VẤN ↗
+              {t.nav.bookDemo} ↗
             </button>
           </div>
         </div>
@@ -534,10 +424,10 @@ export default function HomePage() {
           <div className="nx-wrap nx-statement-grid">
             <div className="nx-reveal nx-statement-left">
               <div>
-                <div className="nx-kicker">01 — THE BIG PICTURE</div>
+                <div className="nx-kicker">{t.statement.kicker}</div>
                 <div className="nx-statement-foot">
                   <b>01 / 04</b>
-                  <span>From complexity to clarity</span>
+                  <span>{t.statement.footSub}</span>
                 </div>
               </div>
               <div className="nx-statement-cta">
@@ -546,32 +436,25 @@ export default function HomePage() {
                   className="nx-btn nx-btn-orange"
                   onClick={() => setConsultationOpen(true)}
                 >
-                  + Tạo đơn vận chuyển <span className="nx-arrow">↗</span>
+                  {t.statement.createOrderBtn} <span className="nx-arrow">↗</span>
                 </button>
                 <span className="nx-statement-cta-note">
-                  Gửi yêu cầu trực tuyến &amp; nhận báo giá nhanh
+                  {t.statement.createOrderNote}
                 </span>
               </div>
             </div>
             <div className="nx-reveal">
               <h2>
-                Logistics không chỉ là di chuyển. Đó là{" "}
-                <span>kết nối mọi quyết định.</span>
+                {t.statement.headlineBefore}
+                <span>{t.statement.headlineHighlight}</span>
               </h2>
-              <p className="nx-statement-copy">
-                Từ điều vận hàng không, theo dõi vận đơn đến hoạt động kho vận
-                và vận tải — NEXLOG hướng tới việc đưa dữ liệu, quy trình và con
-                người về cùng một nhịp vận hành.
-              </p>
+              <p className="nx-statement-copy">{t.statement.copy}</p>
             </div>
           </div>
         </section>
 
-        {/* MARQUEE (moved under 01 / 04) */}
-        <div
-          className="nx-ticker"
-          aria-label="Khách hàng, nhãn hàng và đối tác hợp tác cùng NEXLOG"
-        >
+        {/* MARQUEE (under 01 / 04) */}
+        <div className="nx-ticker" aria-label={t.marqueeAria}>
           <div className="nx-ticker-track">
             <span>
               ALS CARGO <i>✳</i> VIETNAM AIRLINES CARGO <i>✳</i> SAMSUNG
@@ -595,22 +478,21 @@ export default function HomePage() {
           <div className="nx-wrap">
             <div className="nx-platform-head nx-reveal">
               <div>
-                <div className="nx-kicker">02 — EXPLORE THE PLATFORM</div>
+                <div className="nx-kicker">{t.platform.kicker}</div>
                 <h2>
-                  Một hệ thống.
+                  {t.platform.headlineLine1}
                   <br />
-                  <span style={{ color: "var(--blue)" }}>Nhiều điểm chạm.</span>
+                  <span style={{ color: "var(--blue)" }}>
+                    {t.platform.headlineLine2}
+                  </span>
                 </h2>
               </div>
-              <p>
-                Chọn một điểm trên hành trình để khám phá cách NEXLOG hỗ trợ
-                từng mắt xích trong hoạt động logistics.
-              </p>
+              <p>{t.platform.lead}</p>
             </div>
 
             <div className="nx-product-layout">
               <div className="nx-product-list nx-reveal">
-                {PRODUCTS.map((item) => (
+                {products.map((item) => (
                   <button
                     key={item.id}
                     type="button"
@@ -633,7 +515,7 @@ export default function HomePage() {
                   type="button"
                   className="nx-stage-open"
                   onClick={() => setProductModalOpen(true)}
-                  aria-label="Xem chi tiết giải pháp"
+                  aria-label={t.platform.openDetailAria}
                 >
                   ↗
                 </button>
@@ -655,7 +537,7 @@ export default function HomePage() {
                     className="nx-stage-chip"
                     onClick={() => setProductModalOpen(true)}
                   >
-                    EXPLORE MODULE ↗
+                    {t.platform.exploreModule}
                   </button>
                 </div>
               </div>
@@ -668,32 +550,29 @@ export default function HomePage() {
           <div className="nx-wrap">
             <div className="nx-route-intro nx-reveal">
               <div>
-                <div className="nx-kicker">03 — ONE CONNECTED JOURNEY</div>
+                <div className="nx-kicker">{t.journey.kicker}</div>
                 <h2>
-                  Điểm chạm nào
+                  {t.journey.headlineLine1}
                   <br />
-                  cũng có <em>ý nghĩa.</em>
+                  {t.journey.headlineLine2Before}
+                  <em>{t.journey.headlineLine2Em}</em>
                 </h2>
               </div>
-              <p>
-                NEXLOG kết nối những hoạt động thường ngày thành một dòng chảy
-                thống nhất — từ lúc tiếp nhận thông tin, xử lý hàng hóa đến khi
-                hoàn tất vận chuyển.
-              </p>
+              <p>{t.journey.lead}</p>
             </div>
 
             <button
               type="button"
               className="nx-plane-marker"
               onClick={() => setProductModalOpen(true)}
-              aria-label="Mở thông tin sản phẩm"
+              aria-label={t.journey.planeAria}
             >
               <span>✈</span>
-              <small>CHẠM ĐỂ KHÁM PHÁ</small>
+              <small>{t.journey.planeHint}</small>
             </button>
 
             <div className="nx-route-track nx-reveal">
-              {JOURNEY_STEPS.map((step) => (
+              {t.journey.steps.map((step) => (
                 <div className="nx-route-row" key={step.num}>
                   <div className="nx-num">{step.num}</div>
                   <div>
@@ -712,49 +591,22 @@ export default function HomePage() {
           <div className="nx-wrap">
             <div className="nx-people-head nx-reveal">
               <div>
-                <div className="nx-kicker">04 — PEOPLE BEHIND EVERY MOVE</div>
-                <h2>Công nghệ tốt bắt đầu từ những con người thật.</h2>
+                <div className="nx-kicker">{t.people.kicker}</div>
+                <h2>{t.people.headline}</h2>
               </div>
-              <p>
-                Một hệ thống chỉ thực sự có giá trị khi giúp đội ngũ phối hợp
-                tốt hơn trong từng quyết định mỗi ngày.
-              </p>
+              <p>{t.people.lead}</p>
             </div>
 
             <div className="nx-people-grid nx-reveal">
-              <article className="nx-person-card">
-                <img
-                  loading="lazy"
-                  src="/images/trials/trial-1.jpg"
-                  alt="Nhân sự vận hành theo dõi hoạt động hàng hóa"
-                />
-                <div className="nx-caption">
-                  <small>OPERATIONS TEAM</small>
-                  <strong>Nhìn rõ từng mắt xích</strong>
-                </div>
-              </article>
-              <article className="nx-person-card">
-                <img
-                  loading="lazy"
-                  src="/images/trials/trial-2.jpg"
-                  alt="Nhân viên điều phối theo dõi dữ liệu vận chuyển"
-                />
-                <div className="nx-caption">
-                  <small>CONTROL &amp; VISIBILITY</small>
-                  <strong>Chủ động trong điều phối</strong>
-                </div>
-              </article>
-              <article className="nx-person-card">
-                <img
-                  loading="lazy"
-                  src="/images/trials/trial-3.jpg"
-                  alt="Nhân sự làm việc tại nhà ga hàng hóa"
-                />
-                <div className="nx-caption">
-                  <small>CARGO HANDLING</small>
-                  <strong>Vận hành liền mạch</strong>
-                </div>
-              </article>
+              {t.people.cards.map((card, idx) => (
+                <article className="nx-person-card" key={idx}>
+                  <img loading="lazy" src={card.src} alt={card.alt} />
+                  <div className="nx-caption">
+                    <small>{card.tag}</small>
+                    <strong>{card.title}</strong>
+                  </div>
+                </article>
+              ))}
             </div>
 
             <div className="nx-people-cta nx-reveal">
@@ -763,8 +615,7 @@ export default function HomePage() {
                 className="nx-btn nx-btn-outline"
                 onClick={() => setGalleryModalOpen(true)}
               >
-                Xem thêm câu chuyện doanh nghiệp{" "}
-                <span className="nx-arrow">↗</span>
+                {t.people.moreBtn} <span className="nx-arrow">↗</span>
               </button>
             </div>
           </div>
@@ -776,18 +627,17 @@ export default function HomePage() {
           id="contact"
           ref={contactRef}
         >
-          {/* Desktop / Wide Orbiting Enterprise Trial Photos */}
           <div
             className="nx-trial-orbit-layer"
-            aria-label="Hình ảnh các doanh nghiệp đến dùng thử sản phẩm NEXLOG"
+            aria-label={t.contact.orbitAria}
           >
-            {ENTERPRISE_TRIALS.map((item) => (
+            {trials.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 className={`nx-trial-card ${item.slotClass}`}
-                onClick={() => setActiveTrialPhoto(item)}
-                aria-label={`Xem ảnh dùng thử: ${item.title}`}
+                onClick={() => setActiveTrialPhotoId(item.id)}
+                aria-label={item.title}
               >
                 <img src={item.src} alt={item.title} loading="lazy" />
                 <div className="nx-trial-card-label">
@@ -799,28 +649,25 @@ export default function HomePage() {
           </div>
 
           <div className="nx-wrap nx-contact-inner">
-            <div className="nx-kicker">YOUR NEXT MOVE STARTS HERE</div>
+            <div className="nx-kicker">{t.contact.kicker}</div>
             <h2>
-              LET ME BE<span>YOUR NEXLOG.</span>
+              {t.contact.headlineLine1}
+              <span>{t.contact.headlineLine2}</span>
             </h2>
-            <p className="nx-contact-desc">
-              Cùng các doanh nghiệp tiên phong trải nghiệm trực tiếp hệ thống
-              NEXLOG. Chia sẻ email doanh nghiệp của bạn để đặt lịch dùng thử
-              sản phẩm.
-            </p>
+            <p className="nx-contact-desc">{t.contact.desc}</p>
             <form className="nx-lead-form" onSubmit={handleLeadSubmit}>
               <input
                 type="email"
                 value={leadEmail}
                 onChange={(e) => setLeadEmail(e.target.value)}
-                placeholder="Nhập email của bạn (ví dụ: name@company.com)"
+                placeholder={t.contact.emailPlaceholder}
                 required
-                aria-label="Email doanh nghiệp"
+                aria-label={t.contact.emailAria}
               />
-              <button type="submit">ĐĂNG KÝ DÙNG THỬ&nbsp; ↗</button>
+              <button type="submit">{t.contact.submitBtn}&nbsp; ↗</button>
             </form>
             <div className="nx-form-note">
-              Hoặc{" "}
+              {t.contact.notePrefix}
               <button
                 type="button"
                 onClick={() => setConsultationOpen(true)}
@@ -833,28 +680,27 @@ export default function HomePage() {
                   padding: 0,
                 }}
               >
-                đặt lịch tư vấn chi tiết ngay tại đây
-              </button>{" "}
-              cho <b>hành trình của bạn.</b>
+                {t.contact.noteLink}
+              </button>
+              {t.contact.noteSuffixBefore}
+              <b>{t.contact.noteSuffixBold}</b>
             </div>
 
             <div className="nx-trial-badge-row">
               <span className="nx-trial-pill">
-                <span className="nx-dot" /> ENTERPRISE TRIALS · CÁC DOANH NGHIỆP
-                TRẢI NGHIỆM NEXLOG
+                <span className="nx-dot" /> {t.contact.trialPill}
               </span>
             </div>
 
-            {/* Responsive pop-in grid for Tablet / Mobile */}
             <div className="nx-trial-mobile-grid">
-              {ENTERPRISE_TRIALS.map((item, idx) => (
+              {trials.map((item, idx) => (
                 <button
                   key={item.id}
                   type="button"
                   className="nx-trial-mobile-card"
                   style={{ "--delay": `${0.08 * (idx + 1)}s` }}
-                  onClick={() => setActiveTrialPhoto(item)}
-                  aria-label={`Xem ảnh dùng thử: ${item.title}`}
+                  onClick={() => setActiveTrialPhotoId(item.id)}
+                  aria-label={item.title}
                 >
                   <img src={item.src} alt={item.title} loading="lazy" />
                   <div className="nx-trial-card-label">
@@ -879,18 +725,15 @@ export default function HomePage() {
                 scrollTo("#intro");
               }}
             />
-            <p>
-              NEXLOG — Smart logistics. Clearer decisions. Better connected
-              journeys.
-            </p>
+            <p>{t.footer.tagline}</p>
             <div className="nx-footer-links">
-              <Link href="/blog">Tin tức</Link>
-              <Link href="/login">Cổng hệ thống ↗</Link>
+              <Link href="/blog">{t.nav.blog}</Link>
+              <Link href="/login">{t.footer.portalLink}</Link>
             </div>
           </div>
           <div className="nx-footer-bottom">
-            <span>© 2026 NEXLOG · SMART LOGISTICS PLATFORM</span>
-            <span>DESIGNED TO MOVE FORWARD</span>
+            <span>{t.footer.copyright}</span>
+            <span>{t.footer.motto}</span>
           </div>
         </div>
       </footer>
@@ -900,7 +743,7 @@ export default function HomePage() {
         type="button"
         className={`nx-float-plane ${showFloatPlane ? "show" : ""}`}
         onClick={() => scrollTo("#platform")}
-        aria-label="Khám phá giải pháp"
+        aria-label={t.modals.floatPlaneAria}
       >
         ✈
       </button>
@@ -911,7 +754,7 @@ export default function HomePage() {
           className="nx-modal"
           role="dialog"
           aria-modal="true"
-          aria-label="Video giới thiệu NEXLOG"
+          aria-label={t.modals.videoAria}
           onClick={(e) => {
             if (e.target === e.currentTarget) setVideoModalOpen(false);
           }}
@@ -921,7 +764,7 @@ export default function HomePage() {
               type="button"
               className="nx-modal-close"
               onClick={() => setVideoModalOpen(false)}
-              aria-label="Đóng"
+              aria-label={t.modals.closeAria}
             >
               ×
             </button>
@@ -934,10 +777,7 @@ export default function HomePage() {
             />
             <div className="nx-video-caption">
               <div className="nx-eyebrow">NEXLOG · INTRO FILM</div>
-              <p>
-                Trải nghiệm tổng quan về hệ sinh thái điều vận và logistics
-                thông minh NEXLOG.
-              </p>
+              <p>{t.modals.videoCaption}</p>
             </div>
           </div>
         </div>
@@ -949,7 +789,7 @@ export default function HomePage() {
           className="nx-modal"
           role="dialog"
           aria-modal="true"
-          aria-label="Thông tin giải pháp"
+          aria-label={t.modals.productAria}
           onClick={(e) => {
             if (e.target === e.currentTarget) setProductModalOpen(false);
           }}
@@ -959,7 +799,7 @@ export default function HomePage() {
               type="button"
               className="nx-modal-close"
               onClick={() => setProductModalOpen(false)}
-              aria-label="Đóng"
+              aria-label={t.modals.closeAria}
             >
               ×
             </button>
@@ -991,7 +831,7 @@ export default function HomePage() {
           className="nx-modal"
           role="dialog"
           aria-modal="true"
-          aria-label="Câu chuyện doanh nghiệp dùng thử"
+          aria-label={t.modals.galleryAria}
           onClick={(e) => {
             if (e.target === e.currentTarget) setGalleryModalOpen(false);
           }}
@@ -1001,7 +841,7 @@ export default function HomePage() {
               type="button"
               className="nx-modal-close"
               onClick={() => setGalleryModalOpen(false)}
-              aria-label="Đóng"
+              aria-label={t.modals.closeAria}
             >
               ×
             </button>
@@ -1011,7 +851,7 @@ export default function HomePage() {
             >
               <img
                 src="/images/trials/trial-1.jpg"
-                alt="Doanh nghiệp trải nghiệm NEXLOG"
+                alt={trials[0].title}
               />
             </div>
             <div
@@ -1020,7 +860,7 @@ export default function HomePage() {
             >
               <img
                 src="/images/trials/trial-2.jpg"
-                alt="Doanh nghiệp theo dõi vận đơn"
+                alt={trials[1].title}
               />
             </div>
             <div
@@ -1029,7 +869,7 @@ export default function HomePage() {
             >
               <img
                 src="/images/trials/trial-3.jpg"
-                alt="Thử nghiệm quản lý kho vận"
+                alt={trials[2].title}
               />
             </div>
             <div
@@ -1038,20 +878,17 @@ export default function HomePage() {
             >
               <img
                 src="/images/trials/trial-4.jpg"
-                alt="Đối tác doanh nghiệp NEXLOG"
+                alt={trials[3].title}
               />
             </div>
             <div className="nx-gallery-center">
-              <div className="nx-eyebrow">PEOPLE · PROCESS · PROGRESS</div>
+              <div className="nx-eyebrow">{t.modals.galleryEyebrow}</div>
               <h2>
-                Better connected.
+                {t.modals.galleryTitleLine1}
                 <br />
-                Better together.
+                {t.modals.galleryTitleLine2}
               </h2>
-              <p>
-                Những khoảnh khắc thực tế khi các doanh nghiệp vận tải &amp;
-                logistics đến trải nghiệm và đồng hành cùng NEXLOG.
-              </p>
+              <p>{t.modals.galleryDesc}</p>
               <button
                 type="button"
                 className="nx-btn nx-btn-orange"
@@ -1060,7 +897,7 @@ export default function HomePage() {
                   scrollTo("#contact");
                 }}
               >
-                Bắt đầu câu chuyện của bạn ↗
+                {t.modals.galleryCta}
               </button>
             </div>
           </div>
@@ -1075,15 +912,15 @@ export default function HomePage() {
           aria-modal="true"
           aria-label={activeTrialPhoto.title}
           onClick={(e) => {
-            if (e.target === e.currentTarget) setActiveTrialPhoto(null);
+            if (e.target === e.currentTarget) setActiveTrialPhotoId(null);
           }}
         >
           <div className="nx-modal-panel nx-lightbox-panel">
             <button
               type="button"
               className="nx-modal-close"
-              onClick={() => setActiveTrialPhoto(null)}
-              aria-label="Đóng"
+              onClick={() => setActiveTrialPhotoId(null)}
+              aria-label={t.modals.closeAria}
             >
               ×
             </button>

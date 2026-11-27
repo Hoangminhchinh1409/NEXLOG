@@ -226,6 +226,61 @@
   color: var(--ink);
 }
 
+.nx-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nx-lang-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+.nx-lang-switch button {
+  border: 0;
+  background: transparent;
+  padding: 6px 10px;
+  border-radius: 999px;
+  transition: background 0.2s, color 0.2s;
+  line-height: 1;
+}
+
+.nx-lang-switch--dark {
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.nx-lang-switch--dark button {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.nx-lang-switch--dark button.active {
+  background: var(--orange);
+  color: #fff;
+}
+
+.nx-lang-switch--light {
+  border: 1px solid rgba(9, 26, 46, 0.14);
+  background: rgba(9, 26, 46, 0.04);
+}
+
+.nx-lang-switch--light button {
+  color: #556679;
+}
+
+.nx-lang-switch--light button.active {
+  background: var(--ink);
+  color: #fff;
+}
+
 .nx-intro-content {
   width: min(1220px, calc(100% - 64px));
   margin: auto;
