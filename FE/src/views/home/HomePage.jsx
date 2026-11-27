@@ -176,7 +176,7 @@ const ENTERPRISE_TRIALS = [
   {
     id: "tc-4",
     slotClass: "nx-tc-4",
-    src: "https://cargo.finnair.com/resource/image/3329258/landscape_ratio16x9/1000/563/ebeb936a4a7169c9d7d1635625344137/1927F3907E2AAFF75C105E74231A7021/2023-12-14-finnair-cargo0586retfinal-jpg.jpg",
+    src: "/images/trials/trial-4.jpg",
     badge: "WORKSHOP · MEKONG LOGISTICS",
     title: "Buổi onboarding doanh nghiệp",
     desc: "Các doanh nghiệp đối tác tham gia phiên trải nghiệm thực tế và đóng góp phản hồi trực tiếp cho đội ngũ sản phẩm NEXLOG.",
@@ -184,7 +184,7 @@ const ENTERPRISE_TRIALS = [
   {
     id: "tc-5",
     slotClass: "nx-tc-5",
-    src: "https://www.loginextsolutions.com/_next/image?q=75&url=%2Flanding-page%2Fai-agent-reliable-real-time-shipment-tracking%2Fimage-2.webp&w=1200",
+    src: "/images/trials/trial-5.jpg",
     badge: "CONTROL TOWER · ASIALINK",
     title: "Vận hành thử trung tâm điều phối",
     desc: "Kiểm thử màn hình trung tâm điều phối đa tuyến theo thời gian thực để đánh giá tốc độ phản ứng vận hành.",
@@ -192,7 +192,7 @@ const ENTERPRISE_TRIALS = [
   {
     id: "tc-6",
     slotClass: "nx-tc-6",
-    src: "https://oaksl.ae/assets/about-warehouse.jpg",
+    src: "/images/trials/trial-6.jpg",
     badge: "PARTNER · PACIFIC FORWARDING",
     title: "Hợp tác triển khai thực tế",
     desc: "Đại diện doanh nghiệp hoàn tất phiên dùng thử sản phẩm và thống nhất lộ trình kết nối hệ thống cùng NEXLOG.",
@@ -1037,7 +1037,7 @@ export default function HomePage() {
               data-label="WORKSHOP · MEKONG LOGISTICS"
             >
               <img
-                src="https://cargo.finnair.com/resource/image/3329258/landscape_ratio16x9/1000/563/ebeb936a4a7169c9d7d1635625344137/1927F3907E2AAFF75C105E74231A7021/2023-12-14-finnair-cargo0586retfinal-jpg.jpg"
+                src="/images/trials/trial-4.jpg"
                 alt="Đối tác doanh nghiệp NEXLOG"
               />
             </div>
